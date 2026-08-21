@@ -84,3 +84,10 @@ npm run db:generate
 
 La interfaz incluye soporte para Safari en iPhone y para instalación desde **Compartir → Añadir a pantalla de inicio**. Se añadieron `viewport-fit=cover`, áreas seguras de iOS, tamaños táctiles, prevención del zoom automático en formularios y un `manifest.webmanifest` con iconos para pantalla de inicio.
 
+
+
+## Actualización automática desde ZIP
+
+El repositorio incluye GitHub Actions en `.github/workflows/`. Para una actualización futura, sube **un solo archivo `.zip` a la raíz de `main`**. El workflow valida que corresponda a este proyecto, conserva `.github`, reemplaza el código, elimina el ZIP y crea el commit de actualización. Después, el workflow de verificación instala dependencias y compila/prueba la aplicación.
+
+> Importante: en **Settings → Actions → General → Workflow permissions**, selecciona **Read and write permissions** para permitir que el workflow guarde la actualización.

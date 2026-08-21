@@ -1,0 +1,97 @@
+name: Actualizar proyecto desde ZIP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-project-from-zip
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Localizar un único ZIP
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t ZIPS < <(find . -maxdepth 1 -type f -iname '*.zip' -printf '%f\n')
+          if [ "${#ZIPS[@]}" -ne 1 ]; then
+            echo "ERROR: debe existir exactamente un ZIP en la raíz; encontrados: ${#ZIPS[@]}"
+            printf '%s\n' "${ZIPS[@]:-}"
+            exit 1
+          fi
+          echo "name=${ZIPS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Descomprimir y detectar raíz del proyecto
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/herra-update
+          mkdir -p /tmp/herra-update/extracted
+          unzip -q "${{ steps.zip.outputs.name }}" -d /tmp/herra-update/extracted
+          ROOT=/tmp/herra-update/extracted
+          shopt -s dotglob nullglob
+          ITEMS=("$ROOT"/*)
+          if [ "${#ITEMS[@]}" -eq 1 ] && [ -d "${ITEMS[0]}" ]; then
+            ROOT="${ITEMS[0]}"
+          fi
+          test -f "$ROOT/package.json" || { echo 'ERROR: falta package.json'; exit 1; }
+          test -d "$ROOT/app" || { echo 'ERROR: falta app/'; exit 1; }
+          test -d "$ROOT/public" || { echo 'ERROR: falta public/'; exit 1; }
+          node -e "const p=require(process.argv[1]); if(p.name!=='control-inventario-negocio') process.exit(1)" "$ROOT/package.json" || { echo 'ERROR: el ZIP no parece corresponder a HerraControl'; exit 1; }
+          echo "$ROOT" > /tmp/herra-update/root.txt
+
+      - name: Reemplazar código conservando automatización
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(cat /tmp/herra-update/root.txt)"
+          mkdir -p /tmp/herra-update/github-safe
+          cp -a .github/. /tmp/herra-update/github-safe/
+          ZIP="${{ steps.zip.outputs.name }}"
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' ! -name "$ZIP" -exec rm -rf {} +
+          cp -a "$ROOT"/. ./
+          rm -rf .github
+          mkdir -p .github
+          cp -a /tmp/herra-update/github-safe/. .github/
+          rm -f "$ZIP"
+
+      - name: Validar proyecto actualizado
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package.json
+          test -d app
+          test -d public
+          test -f .github/workflows/update-from-zip.yml
+          test -f .github/workflows/build-web.yml
+
+      - name: Guardar actualización
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No hay cambios que guardar.'
+            exit 0
+          fi
+          git commit -m "chore: actualizar proyecto desde ZIP [skip ci]"
+          git push
