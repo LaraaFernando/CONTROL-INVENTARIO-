@@ -1,6 +1,8 @@
 name: Verificar aplicación web
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths-ignore:
@@ -10,10 +12,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: verificar-web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  verify:
+    name: Lint, build y pruebas
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
@@ -21,12 +28,14 @@ jobs:
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: "22.13.0"
           cache: npm
 
       - name: Instalar dependencias
         run: npm ci
 
-      - name: Compilar aplicación
-        run: npm run build
+      - name: Revisar código
+        run: npm run lint
 
+      - name: Compilar y ejecutar pruebas
+        run: npm test

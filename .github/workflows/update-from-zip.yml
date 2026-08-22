@@ -18,12 +18,18 @@ jobs:
   update:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
 
       - name: Localizar un único ZIP
         id: zip
@@ -51,34 +57,52 @@ jobs:
           if [ "${#ITEMS[@]}" -eq 1 ] && [ -d "${ITEMS[0]}" ]; then
             ROOT="${ITEMS[0]}"
           fi
+          test ! -e "$ROOT/.git" || { echo 'ERROR: el ZIP no debe incluir .git'; exit 1; }
+          if find "$ROOT" -type l -print -quit | grep -q .; then
+            echo 'ERROR: el ZIP no debe incluir enlaces simbólicos'
+            exit 1
+          fi
           test -f "$ROOT/package.json" || { echo 'ERROR: falta package.json'; exit 1; }
           test -d "$ROOT/app" || { echo 'ERROR: falta app/'; exit 1; }
           test -d "$ROOT/public" || { echo 'ERROR: falta public/'; exit 1; }
-          node -e "const p=require(process.argv[1]); if(p.name!=='control-inventario-negocio') process.exit(1)" "$ROOT/package.json" || { echo 'ERROR: el ZIP no parece corresponder a HerraControl'; exit 1; }
+          node -e "const p=require(process.argv[1]); if(p.name!=='control-inventario-negocio') process.exit(1)" "$ROOT/package.json" || { echo 'ERROR: el ZIP no parece corresponder a CIV'; exit 1; }
           echo "$ROOT" > /tmp/herra-update/root.txt
 
-      - name: Reemplazar código conservando automatización
+      - name: Validar el proyecto extraído
         shell: bash
         run: |
           set -euo pipefail
           ROOT="$(cat /tmp/herra-update/root.txt)"
-          mkdir -p /tmp/herra-update/github-safe
-          cp -a .github/. /tmp/herra-update/github-safe/
+          cd "$ROOT"
+          npm ci
+          npm run lint
+          npm test
+
+      - name: Reemplazar código conservando automatización e infraestructura
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(cat /tmp/herra-update/root.txt)"
+          mkdir -p /tmp/herra-update/repo-safe
+          cp -a .github /tmp/herra-update/repo-safe/
+          if [ -d .openai ]; then cp -a .openai /tmp/herra-update/repo-safe/; fi
+          if [ -f AGENTS.md ]; then cp -a AGENTS.md /tmp/herra-update/repo-safe/; fi
           ZIP="${{ steps.zip.outputs.name }}"
-          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' ! -name "$ZIP" -exec rm -rf {} +
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' ! -name '.openai' ! -name 'AGENTS.md' ! -name "$ZIP" -exec rm -rf {} +
           cp -a "$ROOT"/. ./
-          rm -rf .github
-          mkdir -p .github
-          cp -a /tmp/herra-update/github-safe/. .github/
+          rm -rf .github .openai
+          cp -a /tmp/herra-update/repo-safe/. ./
           rm -f "$ZIP"
 
-      - name: Validar proyecto actualizado
+      - name: Confirmar la actualización validada
         shell: bash
         run: |
           set -euo pipefail
           test -f package.json
           test -d app
           test -d public
+          test -f AGENTS.md
+          test -f .openai/hosting.json
           test -f .github/workflows/update-from-zip.yml
           test -f .github/workflows/build-web.yml
 
@@ -93,5 +117,5 @@ jobs:
             echo 'No hay cambios que guardar.'
             exit 0
           fi
-          git commit -m "chore: actualizar proyecto desde ZIP [skip ci]"
+          git commit -m "chore: actualizar proyecto desde ZIP validado"
           git push

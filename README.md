@@ -21,6 +21,24 @@ Aplicación web para controlar productos, existencias, movimientos diarios, clie
 - Drizzle ORM.
 - Cloudflare D1 (SQLite) para almacenamiento persistente.
 
+## Código, nube y producción
+
+- **Código fuente:** [GitHub — LaraaFernando/CONTROL-INVENTARIO-](https://github.com/LaraaFernando/CONTROL-INVENTARIO-).
+- **Trabajo con la computadora apagada:** entorno de Codex Cloud `LaraaFernando/CONTROL-INVENTARIO-`.
+- **Alojamiento:** OpenAI Sites sobre Cloudflare Workers y D1.
+- **Aplicación publicada:** [control-inventario-negocio.messi020306.chatgpt.site](https://control-inventario-negocio.messi020306.chatgpt.site).
+
+Un commit en GitHub todavía no es una publicación. La entrega queda completa cuando el PR se integra, GitHub Actions termina correctamente, Sites publica esa versión y se comprueba la URL productiva.
+
+## Cambios desde el celular con la computadora apagada
+
+1. En ChatGPT abre **Codex** e inicia una tarea de **Codex Cloud**; no elijas Remote, porque Remote ejecuta en la computadora conectada.
+2. Selecciona el entorno `LaraaFernando/CONTROL-INVENTARIO-` y la rama base `main`.
+3. Describe el cambio. Las reglas de [`AGENTS.md`](./AGENTS.md) exigen rama, PR, comprobaciones, integración, publicación y prueba real.
+4. Considera terminada la solicitud únicamente cuando recibas enlaces del PR, commit, GitHub Actions y la aplicación publicada.
+
+El iPhone no recibe una copia de los archivos fuente. La PWA instalada abre la versión publicada; por eso el despliegue y la prueba de producción son obligatorios.
+
 ## Subir el proyecto a GitHub
 
 1. Crea un repositorio vacío en GitHub.
@@ -82,15 +100,15 @@ npm run db:generate
 
 ## Compatibilidad con iPhone / PWA
 
-La interfaz incluye soporte para Safari en iPhone y para instalación desde **Compartir → Añadir a pantalla de inicio**. Se añadieron `viewport-fit=cover`, áreas seguras de iOS, tamaños táctiles, prevención del zoom automático en formularios y un `manifest.webmanifest` con iconos para pantalla de inicio.
+La interfaz incluye soporte para Safari en iPhone y para instalación desde **Compartir → Añadir a pantalla de inicio**. El service worker busca una versión nueva al abrir la aplicación y cada hora; cuando hay una actualización muestra **Nueva versión disponible** para recargarla sin depender de los archivos de la computadora.
 
 
 
 ## Actualización automática desde ZIP
 
-El repositorio incluye GitHub Actions en `.github/workflows/`. Para una actualización futura, sube **un solo archivo `.zip` a la raíz de `main`**. El workflow valida que corresponda a este proyecto, conserva `.github`, reemplaza el código, elimina el ZIP y crea el commit de actualización. Después, el workflow de verificación instala dependencias y compila/prueba la aplicación.
+Este método queda disponible como recuperación, pero para cambios normales se recomienda Codex Cloud y PR. Al subir **un solo archivo `.zip` a la raíz de `main`**, el workflow primero ejecuta instalación, lint, build y pruebas sobre el contenido extraído. Sólo si todo termina correctamente reemplaza el código, conservando `.github`, `.openai` y `AGENTS.md`.
 
-> Importante: en **Settings → Actions → General → Workflow permissions**, selecciona **Read and write permissions** para permitir que el workflow guarde la actualización.
+> En **Settings → Actions → General → Workflow permissions** debe estar habilitado **Read and write permissions** para que el workflow pueda guardar una actualización validada.
 
 ## Seguridad y permisos (v2)
 
