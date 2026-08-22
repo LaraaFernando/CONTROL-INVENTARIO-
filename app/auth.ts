@@ -124,13 +124,24 @@ export type AuthUser = {
 let schemaReady: Promise<void> | null = null;
 
 export async function ensureSecuritySchema() {
-  if (!schemaReady) schemaReady = initializeSchema();
+  if (!schemaReady) {
+    schemaReady = initializeSchema().catch((error) => {
+      schemaReady = null;
+      throw error;
+    });
+  }
   return schemaReady;
 }
 
 async function initializeSchema() {
   const db = env.DB;
   if (!db) throw new Error("D1 binding DB no está disponible.");
+
+  // Sites applies the packaged migrations before serving a version. Avoid
+  // repeating schema writes on every fresh Worker isolate once the auth
+  // tables exist: concurrent DDL during sign-in can hold D1 schema locks and
+  // leave /api/auth waiting indefinitely.
+  if (await securitySchemaExists(db)) return;
 
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS users (
@@ -185,6 +196,18 @@ async function initializeSchema() {
   }
 
   await db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
+}
+
+async function securitySchemaExists(db: D1Database) {
+  try {
+    await db.batch([
+      db.prepare("SELECT 1 FROM users LIMIT 1"),
+      db.prepare("SELECT 1 FROM sessions LIMIT 1"),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function hasUsers() {
@@ -378,3 +401,4 @@ function timingSafeEqual(a: string, b: string) {
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
+
