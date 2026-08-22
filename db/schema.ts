@@ -38,6 +38,8 @@ export const movements = sqliteTable("movements", {
   reference: text("reference").notNull().default(""),
   notes: text("notes").notNull().default(""),
   performedBy: text("performed_by").notNull().default(""),
+  unitAmount: real("unit_amount").notNull().default(0),
+  totalAmount: real("total_amount").notNull().default(0),
   voided: integer("voided").notNull().default(0),
   voidedBy: text("voided_by").notNull().default(""),
   voidedAt: text("voided_at"),

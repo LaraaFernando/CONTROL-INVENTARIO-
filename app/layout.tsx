@@ -3,26 +3,26 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://control-inventario-negocio.messi020306.chatgpt.site"),
-  title: "Control de Inventario y Ventas",
+  title: "CIV — Control de Inventario y Ventas",
   description: "Inventario, movimientos, clientes y notas de crédito en un solo lugar.",
-  applicationName: "Control Inventario",
+  applicationName: "CIV",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Inventario",
+    title: "CIV",
   },
   formatDetection: {
     telephone: false,
   },
   openGraph: {
-    title: "Control de Inventario y Ventas",
+    title: "CIV — Control de Inventario y Ventas",
     description: "Inventario, movimientos, clientes y notas de crédito en un solo lugar.",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Control de Inventario y Ventas" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "CIV — Control de Inventario y Ventas" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Control de Inventario y Ventas",
+    title: "CIV — Control de Inventario y Ventas",
     description: "Inventario, movimientos, clientes y notas de crédito en un solo lugar.",
     images: ["/og.png"],
   },

@@ -1,6 +1,6 @@
 {
-  "name": "Control de Inventario y Ventas",
-  "short_name": "Inventario",
+  "name": "CIV — Control de Inventario y Ventas",
+  "short_name": "CIV",
   "description": "Inventario, movimientos, clientes y notas de crédito en un solo lugar.",
   "start_url": "/",
   "scope": "/",
