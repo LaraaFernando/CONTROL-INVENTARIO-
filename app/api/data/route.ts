@@ -136,7 +136,7 @@ if (action === "add_product") {
 
   return Response.json({ ok: true }, { status: 201 });
 }
-    }
+    
 
     if (action === "edit_product") {
       requirePermission(user, "products.edit");
