@@ -1,6 +1,7 @@
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "../../../db";
+import { ensureInventorySchema } from "../../../db/inventory-schema";
 import { clients, creditNotes, products } from "../../../db/schema";
 import {
   AuthError,
@@ -51,6 +52,10 @@ type MovementRow = {
   clientName: string | null;
   unitAmount: number;
   totalAmount: number;
+  requestedQuantity: number;
+  pendingQuantity: number;
+  presentation: string;
+  presentationFactor: number;
 };
 
 function message(error: unknown) {
@@ -87,6 +92,7 @@ function errorResponse(error: unknown) {
 export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
+    await ensureInventorySchema();
     const db = getDb();
 
     const [
@@ -94,7 +100,6 @@ export async function GET(request: Request) {
       clientRows,
       movementResult,
       creditRows,
-      lowStockRows,
     ] = await Promise.all([
       db
         .select()
@@ -126,7 +131,11 @@ export async function GET(request: Request) {
           p.sku AS sku,
           c.name AS clientName,
           m.unit_amount AS unitAmount,
-          m.total_amount AS totalAmount
+          m.total_amount AS totalAmount,
+          m.requested_quantity AS requestedQuantity,
+          m.pending_quantity AS pendingQuantity,
+          m.presentation,
+          m.presentation_factor AS presentationFactor
         FROM movements m
         INNER JOIN products p
           ON p.id = m.product_id
@@ -158,19 +167,6 @@ export async function GET(request: Request) {
         .orderBy(desc(creditNotes.id))
         .limit(200),
 
-      db
-        .select()
-        .from(products)
-        .where(
-          and(
-            eq(products.active, 1),
-            lte(
-              products.currentStock,
-              products.minimumStock,
-            ),
-          ),
-        )
-        .orderBy(products.currentStock),
     ]);
 
     const movementRows = movementResult.results ?? [];
@@ -187,14 +183,27 @@ export async function GET(request: Request) {
           },
     );
 
-    const safeLowStock = lowStockRows.map((product) =>
-      canSeeCost
-        ? product
-        : {
-            ...product,
-            cost: 0,
-          },
-    );
+    const safeLowStock = productRows
+      .filter(
+        (product) =>
+          product.currentStock <
+          Math.max(
+            product.minimumStock,
+            product.targetStock,
+          ),
+      )
+      .sort(
+        (a, b) =>
+          a.currentStock - b.currentStock,
+      )
+      .map((product) =>
+        canSeeCost
+          ? product
+          : {
+              ...product,
+              cost: 0,
+            },
+      );
 
     const inventoryValue = canSeeCost
       ? productRows.reduce(
@@ -291,6 +300,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireUser(request);
+    await ensureInventorySchema();
     const db = getDb();
 
     const body =
@@ -364,6 +374,10 @@ export async function POST(request: Request) {
         body.location ?? "",
       );
 
+      const targetStock = Math.max(0, Math.floor(Number(body.targetStock ?? 0)));
+      const setFactor = Math.max(1, Math.floor(Number(body.setFactor ?? 1)));
+      const boxFactor = Math.max(1, Math.floor(Number(body.boxFactor ?? 1)));
+
       if (!sku || !name) {
         return Response.json(
           {
@@ -387,9 +401,12 @@ export async function POST(request: Request) {
             current_stock,
             minimum_stock,
             location,
+            target_stock,
+            set_factor,
+            box_factor,
             active
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         `)
           .bind(
             sku,
@@ -401,6 +418,9 @@ export async function POST(request: Request) {
             initialStock,
             minimumStock,
             location,
+            targetStock,
+            setFactor,
+            boxFactor,
           )
           .run();
 
@@ -423,7 +443,11 @@ export async function POST(request: Request) {
             notes,
             performed_by,
             unit_amount,
-            total_amount
+            total_amount,
+            requested_quantity,
+            pending_quantity,
+            presentation,
+            presentation_factor
           )
           VALUES
           (
@@ -435,7 +459,11 @@ export async function POST(request: Request) {
             'Inventario al registrar el producto',
             ?,
             ?,
-            ?
+            ?,
+            ?,
+            0,
+            'pieza',
+            1
           )
         `)
           .bind(
@@ -445,6 +473,7 @@ export async function POST(request: Request) {
             performedBy,
             cost,
             totalAmount,
+            initialStock,
           )
           .run();
       }
@@ -549,6 +578,10 @@ export async function POST(request: Request) {
           location: String(
             body.location ?? "",
           ),
+
+          targetStock: Math.max(0, Math.floor(Number(body.targetStock ?? existing.targetStock))),
+          setFactor: Math.max(1, Math.floor(Number(body.setFactor ?? existing.setFactor))),
+          boxFactor: Math.max(1, Math.floor(Number(body.boxFactor ?? existing.boxFactor))),
         })
         .where(
           and(
@@ -756,12 +789,26 @@ export async function POST(request: Request) {
         body.type ?? "",
       );
 
-      const quantity = Math.max(
-        1,
-        Math.floor(
-          Number(body.quantity ?? 0),
-        ),
+      const rawQuantity = Number(
+        body.quantity ?? 0,
       );
+
+      if (
+        !Number.isFinite(rawQuantity) ||
+        !Number.isInteger(rawQuantity) ||
+        rawQuantity < 1
+      ) {
+        return Response.json(
+          {
+            error:
+              "La cantidad debe ser un número entero mayor a cero.",
+          },
+          { status: 400 },
+        );
+      }
+
+      const requestedPresentations =
+        Math.floor(rawQuantity);
 
       if (
         !productId ||
@@ -814,6 +861,58 @@ export async function POST(request: Request) {
               "Producto no encontrado.",
           },
           { status: 404 },
+        );
+      }
+
+      const presentationOptions = new Set([
+        "pieza",
+        "unidad",
+        "ciento",
+        "juego",
+        "caja",
+      ]);
+
+      const requestedPresentation = String(
+        body.presentation ?? "pieza",
+      ).toLowerCase();
+
+      const presentation = presentationOptions.has(
+        requestedPresentation,
+      )
+        ? requestedPresentation
+        : "pieza";
+
+      const presentationFactor =
+        presentation === "ciento"
+          ? 100
+          : presentation === "juego"
+            ? product.setFactor
+            : presentation === "caja"
+              ? product.boxFactor
+              : 1;
+
+      const requestedQuantity =
+        requestedPresentations * presentationFactor;
+
+      const quantity =
+        type === "venta"
+          ? Math.min(
+              requestedQuantity,
+              product.currentStock,
+            )
+          : requestedQuantity;
+
+      const pendingQuantity =
+        type === "venta"
+          ? requestedQuantity - quantity
+          : 0;
+
+      if (type === "venta" && quantity === 0) {
+        return Response.json(
+          {
+            error: `No hay existencia disponible. Faltan ${requestedQuantity} unidades por surtir.`,
+          },
+          { status: 409 },
         );
       }
 
@@ -871,9 +970,13 @@ export async function POST(request: Request) {
             notes,
             performed_by,
             unit_amount,
-            total_amount
+            total_amount,
+            requested_quantity,
+            pending_quantity,
+            presentation,
+            presentation_factor
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           productId,
           clientId,
@@ -885,6 +988,10 @@ export async function POST(request: Request) {
           performedBy,
           unitAmount,
           totalAmount,
+          requestedQuantity,
+          pendingQuantity,
+          presentation,
+          presentationFactor,
         ),
 
         env.DB.prepare(`
@@ -898,7 +1005,15 @@ export async function POST(request: Request) {
       ]);
 
       return Response.json(
-        { ok: true },
+        {
+          ok: true,
+          fulfilledQuantity: quantity,
+          pendingQuantity,
+          warning:
+            pendingQuantity > 0
+              ? `Surtido parcial: se entregaron ${quantity} de ${requestedQuantity} unidades. Quedan ${pendingQuantity} por surtir.`
+              : "",
+        },
         { status: 201 },
       );
     }

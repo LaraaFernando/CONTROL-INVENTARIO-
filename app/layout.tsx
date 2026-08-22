@@ -6,6 +6,9 @@ export const metadata: Metadata = {
   title: "CIV — Control de Inventario y Ventas",
   description: "Inventario, movimientos, clientes y notas de crédito en un solo lugar.",
   applicationName: "CIV",
+  other: {
+    "codex-preview": "development",
+  },
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
