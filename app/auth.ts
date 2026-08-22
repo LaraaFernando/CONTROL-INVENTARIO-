@@ -21,6 +21,12 @@ export const PERMISSION_KEYS = [
   "credit_notes.create",
   "credit_notes.status",
   "credit_notes.delete",
+  "suppliers.manage",
+  "orders.manage",
+  "invoices.manage",
+  "invoices.files",
+  "audit.view",
+  "closures.manage",
   "users.manage",
 ] as const;
 
@@ -54,6 +60,12 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   "credit_notes.create": "Crear notas de crédito",
   "credit_notes.status": "Aplicar/cancelar notas de crédito",
   "credit_notes.delete": "Eliminar/anular notas de crédito",
+  "suppliers.manage": "Administrar proveedores",
+  "orders.manage": "Administrar pedidos y recepciones",
+  "invoices.manage": "Administrar facturas y pagos",
+  "invoices.files": "Cargar y descargar XML/PDF fiscales",
+  "audit.view": "Consultar la bitácora de auditoría",
+  "closures.manage": "Realizar y consultar cortes diarios",
   "users.manage": "Administrar usuarios y permisos",
 };
 
@@ -72,6 +84,9 @@ export const ROLE_DEFAULTS: Record<Role, PermissionMap> = {
     "movements.defective": true,
     "movements.returns": true,
     "movements.adjust": true,
+    "suppliers.manage": true,
+    "orders.manage": true,
+    "audit.view": true,
   },
   ventas: {
     ...NONE,
@@ -79,6 +94,8 @@ export const ROLE_DEFAULTS: Record<Role, PermissionMap> = {
     "clients.edit": true,
     "movements.sale": true,
     "movements.returns": true,
+    "invoices.manage": true,
+    "invoices.files": true,
   },
   credito: {
     ...NONE,
@@ -86,6 +103,12 @@ export const ROLE_DEFAULTS: Record<Role, PermissionMap> = {
     "clients.edit": true,
     "credit_notes.create": true,
     "credit_notes.status": true,
+    "suppliers.manage": true,
+    "orders.manage": true,
+    "invoices.manage": true,
+    "invoices.files": true,
+    "audit.view": true,
+    "closures.manage": true,
   },
   consulta: { ...NONE },
 };

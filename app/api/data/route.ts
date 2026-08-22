@@ -1,6 +1,7 @@
 import { and, desc, eq, lte } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "../../../db";
+import { businessDate, ensureOperationalSchema, recordAudit } from "../../../db/operations";
 import { clients, creditNotes, products } from "../../../db/schema";
 import {
   AuthError,
@@ -51,6 +52,11 @@ type MovementRow = {
   clientName: string | null;
   unitAmount: number;
   totalAmount: number;
+  requestedQuantity: number;
+  pendingQuantity: number;
+  presentation: string;
+  presentationFactor: number;
+  businessDate: string;
 };
 
 function message(error: unknown) {
@@ -87,6 +93,7 @@ function errorResponse(error: unknown) {
 export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
+    await ensureOperationalSchema();
     const db = getDb();
 
     const [
@@ -127,6 +134,11 @@ export async function GET(request: Request) {
           c.name AS clientName,
           m.unit_amount AS unitAmount,
           m.total_amount AS totalAmount
+          ,m.requested_quantity AS requestedQuantity
+          ,m.pending_quantity AS pendingQuantity
+          ,m.presentation
+          ,m.presentation_factor AS presentationFactor
+          ,m.business_date AS businessDate
         FROM movements m
         INNER JOIN products p
           ON p.id = m.product_id
@@ -206,9 +218,7 @@ export async function GET(request: Request) {
         )
       : null;
 
-    const today = new Date()
-      .toISOString()
-      .slice(0, 10);
+    const today = businessDate();
 
     const activeMovements = movementRows.filter(
       (movement) => !movement.voided,
@@ -216,7 +226,7 @@ export async function GET(request: Request) {
 
     const todayMovements = activeMovements.filter(
       (movement) =>
-        movement.createdAt.slice(0, 10) === today,
+        (movement.businessDate || movement.createdAt.slice(0, 10)) === today,
     );
 
     const todaySales = todayMovements
@@ -291,6 +301,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireUser(request);
+    await ensureOperationalSchema();
     const db = getDb();
 
     const body =
@@ -364,6 +375,10 @@ export async function POST(request: Request) {
         body.location ?? "",
       );
 
+      const targetStock = Math.max(0, Math.floor(Number(body.targetStock ?? 0)));
+      const setFactor = Math.max(1, Math.floor(Number(body.setFactor ?? 1)));
+      const boxFactor = Math.max(1, Math.floor(Number(body.boxFactor ?? 1)));
+
       if (!sku || !name) {
         return Response.json(
           {
@@ -387,9 +402,12 @@ export async function POST(request: Request) {
             current_stock,
             minimum_stock,
             location,
+            target_stock,
+            set_factor,
+            box_factor,
             active
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         `)
           .bind(
             sku,
@@ -401,6 +419,9 @@ export async function POST(request: Request) {
             initialStock,
             minimumStock,
             location,
+            targetStock,
+            setFactor,
+            boxFactor,
           )
           .run();
 
@@ -423,7 +444,13 @@ export async function POST(request: Request) {
             notes,
             performed_by,
             unit_amount,
-            total_amount
+            total_amount,
+            requested_quantity,
+            pending_quantity,
+            presentation,
+            presentation_factor,
+            performed_by_user_id,
+            business_date
           )
           VALUES
           (
@@ -435,6 +462,12 @@ export async function POST(request: Request) {
             'Inventario al registrar el producto',
             ?,
             ?,
+            ?,
+            ?,
+            0,
+            'pieza',
+            1,
+            ?,
             ?
           )
         `)
@@ -445,9 +478,15 @@ export async function POST(request: Request) {
             performedBy,
             cost,
             totalAmount,
+            initialStock,
+            user.id,
+            businessDate(),
           )
           .run();
       }
+
+      await recordAudit({ entityType: "product", entityId: productId, action: "crear", user,
+        after: { sku, name, initialStock, targetStock, setFactor, boxFactor } });
 
       return Response.json(
         { ok: true },
@@ -549,6 +588,10 @@ export async function POST(request: Request) {
           location: String(
             body.location ?? "",
           ),
+
+          targetStock: Math.max(0, Math.floor(Number(body.targetStock ?? existing.targetStock))),
+          setFactor: Math.max(1, Math.floor(Number(body.setFactor ?? existing.setFactor))),
+          boxFactor: Math.max(1, Math.floor(Number(body.boxFactor ?? existing.boxFactor))),
         })
         .where(
           and(
@@ -556,6 +599,9 @@ export async function POST(request: Request) {
             eq(products.active, 1),
           ),
         );
+
+      await recordAudit({ entityType: "product", entityId: id, action: "modificar", user,
+        before: existing, after: { sku, name, targetStock: body.targetStock, setFactor: body.setFactor, boxFactor: body.boxFactor } });
 
       return Response.json({
         ok: true,
@@ -587,6 +633,8 @@ export async function POST(request: Request) {
         })
         .where(eq(products.id, id));
 
+      await recordAudit({ entityType: "product", entityId: id, action: "desactivar", user, after: { active: false } });
+
       return Response.json({
         ok: true,
       });
@@ -616,33 +664,18 @@ export async function POST(request: Request) {
         );
       }
 
-      await db
-        .insert(clients)
-        .values({
-          name,
-
-          businessName: String(
-            body.businessName ?? "",
-          ),
-
-          taxId: String(
-            body.taxId ?? "",
-          ),
-
-          phone: String(
-            body.phone ?? "",
-          ),
-
-          email: String(
-            body.email ?? "",
-          ),
-
-          address: String(
-            body.address ?? "",
-          ),
-
-          active: 1,
-        });
+      const method = String(body.defaultPaymentMethod ?? "PUE").toUpperCase() === "PPD" ? "PPD" : "PUE";
+      const result = await env.DB.prepare(`INSERT INTO clients
+        (name, business_name, tax_id, phone, email, address, invoice_required,
+          default_payment_method, credit_days, fiscal_postal_code, fiscal_regime, cfdi_use, active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+        .bind(name, String(body.businessName ?? ""), String(body.taxId ?? "").toUpperCase(),
+          String(body.phone ?? ""), String(body.email ?? ""), String(body.address ?? ""),
+          body.invoiceRequired ? 1 : 0, method, method === "PUE" ? 0 : Math.max(1, Number(body.creditDays ?? 30)),
+          String(body.fiscalPostalCode ?? ""), String(body.fiscalRegime ?? ""), String(body.cfdiUse ?? "G03")).run();
+      const clientId = Number(result.meta.last_row_id);
+      await recordAudit({ entityType: "client", entityId: clientId, action: "crear", user,
+        after: { name, method, creditDays: body.creditDays } });
 
       return Response.json(
         { ok: true },
@@ -672,37 +705,18 @@ export async function POST(request: Request) {
         );
       }
 
-      await db
-        .update(clients)
-        .set({
-          name,
-
-          businessName: String(
-            body.businessName ?? "",
-          ),
-
-          taxId: String(
-            body.taxId ?? "",
-          ),
-
-          phone: String(
-            body.phone ?? "",
-          ),
-
-          email: String(
-            body.email ?? "",
-          ),
-
-          address: String(
-            body.address ?? "",
-          ),
-        })
-        .where(
-          and(
-            eq(clients.id, id),
-            eq(clients.active, 1),
-          ),
-        );
+      const before = await env.DB.prepare("SELECT * FROM clients WHERE id=? AND active=1 LIMIT 1").bind(id).first();
+      if (!before) return Response.json({ error: "Cliente no encontrado." }, { status: 404 });
+      const method = String(body.defaultPaymentMethod ?? "PUE").toUpperCase() === "PPD" ? "PPD" : "PUE";
+      await env.DB.prepare(`UPDATE clients SET name=?, business_name=?, tax_id=?, phone=?, email=?, address=?,
+        invoice_required=?, default_payment_method=?, credit_days=?, fiscal_postal_code=?, fiscal_regime=?, cfdi_use=?
+        WHERE id=? AND active=1`)
+        .bind(name, String(body.businessName ?? ""), String(body.taxId ?? "").toUpperCase(),
+          String(body.phone ?? ""), String(body.email ?? ""), String(body.address ?? ""),
+          body.invoiceRequired ? 1 : 0, method, method === "PUE" ? 0 : Math.max(1, Number(body.creditDays ?? 30)),
+          String(body.fiscalPostalCode ?? ""), String(body.fiscalRegime ?? ""), String(body.cfdiUse ?? "G03"), id).run();
+      await recordAudit({ entityType: "client", entityId: id, action: "modificar", user, before,
+        after: { name, method, creditDays: body.creditDays } });
 
       return Response.json({
         ok: true,
@@ -734,6 +748,8 @@ export async function POST(request: Request) {
         })
         .where(eq(clients.id, id));
 
+      await recordAudit({ entityType: "client", entityId: id, action: "desactivar", user, after: { active: false } });
+
       return Response.json({
         ok: true,
       });
@@ -756,7 +772,7 @@ export async function POST(request: Request) {
         body.type ?? "",
       );
 
-      const quantity = Math.max(
+      const requestedPresentations = Math.max(
         1,
         Math.floor(
           Number(body.quantity ?? 0),
@@ -817,6 +833,29 @@ export async function POST(request: Request) {
         );
       }
 
+      const presentation = ["pieza", "unidad", "ciento", "juego", "caja"].includes(String(body.presentation))
+        ? String(body.presentation)
+        : "pieza";
+      const presentationFactor = presentation === "ciento"
+        ? 100
+        : presentation === "juego"
+          ? Math.max(1, product.setFactor)
+          : presentation === "caja"
+            ? Math.max(1, product.boxFactor)
+            : 1;
+      const requestedQuantity = requestedPresentations * presentationFactor;
+      const quantity = type === "venta"
+        ? Math.min(requestedQuantity, product.currentStock)
+        : requestedQuantity;
+      const pendingQuantity = type === "venta" ? requestedQuantity - quantity : 0;
+
+      if (type === "venta" && quantity === 0) {
+        return Response.json(
+          { error: `No hay existencia disponible. Faltan ${requestedQuantity} unidades base para surtir la solicitud.` },
+          { status: 409 },
+        );
+      }
+
       const delta = positiveTypes.has(
         type,
       )
@@ -858,7 +897,7 @@ export async function POST(request: Request) {
       const totalAmount =
         unitAmount * quantity;
 
-      await env.DB.batch([
+      const batchResult = await env.DB.batch([
         env.DB.prepare(`
           INSERT INTO movements
           (
@@ -871,9 +910,15 @@ export async function POST(request: Request) {
             notes,
             performed_by,
             unit_amount,
-            total_amount
+            total_amount,
+            requested_quantity,
+            pending_quantity,
+            presentation,
+            presentation_factor,
+            performed_by_user_id,
+            business_date
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           productId,
           clientId,
@@ -885,6 +930,12 @@ export async function POST(request: Request) {
           performedBy,
           unitAmount,
           totalAmount,
+          requestedQuantity,
+          pendingQuantity,
+          presentation,
+          presentationFactor,
+          user.id,
+          businessDate(),
         ),
 
         env.DB.prepare(`
@@ -897,8 +948,37 @@ export async function POST(request: Request) {
         ),
       ]);
 
+      const movementId = Number(batchResult[0].meta.last_row_id);
+      await recordAudit({
+        entityType: "movement",
+        entityId: movementId,
+        action: "crear",
+        user,
+        after: {
+          productId,
+          type,
+          requestedQuantity,
+          fulfilledQuantity: quantity,
+          pendingQuantity,
+          presentation,
+          presentationFactor,
+          previousStock: product.currentStock,
+          newStock,
+          unitAmount,
+          totalAmount,
+        },
+      });
+
       return Response.json(
-        { ok: true },
+        {
+          ok: true,
+          movementId,
+          fulfilledQuantity: quantity,
+          pendingQuantity,
+          warning: pendingQuantity > 0
+            ? `Existencia insuficiente: se surtieron ${quantity} unidades base y quedan ${pendingQuantity} pendientes.`
+            : "",
+        },
         { status: 201 },
       );
     }
@@ -910,12 +990,13 @@ export async function POST(request: Request) {
       );
 
       const id = Number(body.id);
+      const reason = String(body.reason ?? "").trim();
 
-      if (!id) {
+      if (!id || !reason) {
         return Response.json(
           {
             error:
-              "Movimiento inválido.",
+              "Movimiento inválido o motivo de anulación faltante.",
           },
           { status: 400 },
         );
@@ -1023,6 +1104,16 @@ export async function POST(request: Request) {
         ),
       ]);
 
+      await recordAudit({
+        entityType: "movement",
+        entityId: id,
+        action: "anular",
+        user,
+        before: movement,
+        after: { voided: true, correctedStock },
+        reason,
+      });
+
       return Response.json({
         ok: true,
       });
@@ -1071,26 +1162,13 @@ export async function POST(request: Request) {
         );
       }
 
-      await db
-        .insert(creditNotes)
-        .values({
-          folio,
-          clientId,
-          amount,
-          reason,
-
-          saleReference: String(
-            body.saleReference ?? "",
-          ),
-
-          status: "Pendiente",
-
-          notes: String(
-            body.notes ?? "",
-          ),
-
-          active: 1,
-        });
+      const result = await env.DB.prepare(`INSERT INTO credit_notes
+        (folio, client_id, amount, reason, sale_reference, status, notes, active)
+        VALUES (?, ?, ?, ?, ?, 'Pendiente', ?, 1)`)
+        .bind(folio, clientId, amount, reason, String(body.saleReference ?? ""), String(body.notes ?? "")).run();
+      const creditId = Number(result.meta.last_row_id);
+      await recordAudit({ entityType: "credit_note", entityId: creditId, action: "crear", user,
+        after: { folio, clientId, amount, reason } });
 
       return Response.json(
         { ok: true },
@@ -1130,6 +1208,7 @@ export async function POST(request: Request) {
         );
       }
 
+      const before = await env.DB.prepare("SELECT * FROM credit_notes WHERE id=? LIMIT 1").bind(id).first();
       await db
         .update(creditNotes)
         .set({
@@ -1141,6 +1220,8 @@ export async function POST(request: Request) {
             eq(creditNotes.active, 1),
           ),
         );
+
+      await recordAudit({ entityType: "credit_note", entityId: id, action: "estatus", user, before, after: { status } });
 
       return Response.json({
         ok: true,
@@ -1157,12 +1238,13 @@ export async function POST(request: Request) {
       );
 
       const id = Number(body.id);
+      const reason = String(body.reason ?? "").trim();
 
-      if (!id) {
+      if (!id || !reason) {
         return Response.json(
           {
             error:
-              "Nota de crédito inválida.",
+              "Nota de crédito inválida o motivo de cancelación faltante.",
           },
           { status: 400 },
         );
@@ -1171,7 +1253,7 @@ export async function POST(request: Request) {
       await env.DB.prepare(`
         UPDATE credit_notes
         SET
-          active = 0,
+          active = 1,
           status = 'Cancelada',
           voided_by = ?,
           voided_at = CURRENT_TIMESTAMP
@@ -1182,6 +1264,9 @@ export async function POST(request: Request) {
           id,
         )
         .run();
+
+      await recordAudit({ entityType: "credit_note", entityId: id, action: "cancelar", user,
+        after: { status: "Cancelada" }, reason });
 
       return Response.json({
         ok: true,
