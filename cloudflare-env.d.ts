@@ -1,7 +1,6 @@
 interface Fetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
-
 interface D1Result<T = unknown> {
   results: T[];
   success: boolean;

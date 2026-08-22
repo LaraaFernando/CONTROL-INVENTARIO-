@@ -58,6 +58,9 @@ export const movements = sqliteTable("movements", {
   voided: integer("voided").notNull().default(0),
   voidedBy: text("voided_by").notNull().default(""),
   voidedAt: text("voided_at"),
+  voidReason: text("void_reason").notNull().default(""),
+  sourceType: text("source_type").notNull().default(""),
+  sourceId: integer("source_id"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -94,6 +97,7 @@ export const purchaseOrders = sqliteTable("purchase_orders", {
   canceled: integer("canceled").notNull().default(0),
   canceledBy: text("canceled_by").notNull().default(""),
   canceledAt: text("canceled_at"),
+  canceledReason: text("canceled_reason").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
@@ -116,6 +120,11 @@ export const purchaseReceipts = sqliteTable("purchase_receipts", {
   receivedByUserId: integer("received_by_user_id"),
   receivedBy: text("received_by").notNull().default(""),
   notes: text("notes").notNull().default(""),
+  canceled: integer("canceled").notNull().default(0),
+  canceledByUserId: integer("canceled_by_user_id"),
+  canceledBy: text("canceled_by").notNull().default(""),
+  canceledAt: text("canceled_at"),
+  cancelReason: text("cancel_reason").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -150,6 +159,7 @@ export const invoices = sqliteTable("invoices", {
   canceled: integer("canceled").notNull().default(0),
   canceledBy: text("canceled_by").notNull().default(""),
   canceledAt: text("canceled_at"),
+  canceledReason: text("canceled_reason").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -164,6 +174,7 @@ export const invoicePayments = sqliteTable("invoice_payments", {
   voided: integer("voided").notNull().default(0),
   voidedBy: text("voided_by").notNull().default(""),
   voidedAt: text("voided_at"),
+  voidReason: text("void_reason").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -220,5 +231,6 @@ export const creditNotes = sqliteTable("credit_notes", {
   active: integer("active").notNull().default(1),
   voidedBy: text("voided_by").notNull().default(""),
   voidedAt: text("voided_at"),
+  voidReason: text("void_reason").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

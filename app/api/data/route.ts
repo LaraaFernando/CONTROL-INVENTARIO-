@@ -1,7 +1,7 @@
 import { and, desc, eq, lte } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "../../../db";
-import { businessDate, ensureOperationalSchema, recordAudit } from "../../../db/operations";
+import { assertBusinessDateOpen, businessDate, ensureOperationalSchema, recordAudit } from "../../../db/operations";
 import { clients, creditNotes, products } from "../../../db/schema";
 import {
   AuthError,
@@ -337,12 +337,7 @@ export async function POST(request: Request) {
         body.name ?? "",
       ).trim();
 
-      const initialStock = Math.max(
-        0,
-        Math.floor(
-          Number(body.initialStock ?? 0),
-        ),
-      );
+      const initialStock = Number(body.initialStock ?? 0);
 
       const category = String(
         body.category ?? "General",
@@ -352,32 +347,19 @@ export async function POST(request: Request) {
         body.unit ?? "pieza",
       );
 
-      const cost = Math.max(
-        0,
-        Number(body.cost ?? 0),
-      );
+      const cost = Number(body.cost ?? 0);
 
-      const salePrice = Math.max(
-        0,
-        Number(body.salePrice ?? 0),
-      );
+      const salePrice = Number(body.salePrice ?? 0);
 
-      const minimumStock = Math.max(
-        0,
-        Math.floor(
-          Number(
-            body.minimumStock ?? 0,
-          ),
-        ),
-      );
+      const minimumStock = Number(body.minimumStock ?? 0);
 
       const location = String(
         body.location ?? "",
       );
 
-      const targetStock = Math.max(0, Math.floor(Number(body.targetStock ?? 0)));
-      const setFactor = Math.max(1, Math.floor(Number(body.setFactor ?? 1)));
-      const boxFactor = Math.max(1, Math.floor(Number(body.boxFactor ?? 1)));
+      const targetStock = Number(body.targetStock ?? 0);
+      const setFactor = Number(body.setFactor ?? 1);
+      const boxFactor = Number(body.boxFactor ?? 1);
 
       if (!sku || !name) {
         return Response.json(
@@ -388,6 +370,23 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
+
+      if (
+        !Number.isInteger(initialStock) || initialStock < 0 ||
+        !Number.isFinite(cost) || cost < 0 ||
+        !Number.isFinite(salePrice) || salePrice < 0 ||
+        !Number.isInteger(minimumStock) || minimumStock < 0 ||
+        !Number.isInteger(targetStock) || targetStock < 0 ||
+        !Number.isInteger(setFactor) || setFactor < 1 ||
+        !Number.isInteger(boxFactor) || boxFactor < 1
+      ) {
+        return Response.json(
+          { error: "Existencias, mínimos, objetivos y factores deben ser enteros válidos; costos y precios no pueden ser negativos." },
+          { status: 400 },
+        );
+      }
+
+      if (initialStock > 0) await assertBusinessDateOpen(businessDate());
 
       const result =
         await env.DB.prepare(`
@@ -543,6 +542,26 @@ export async function POST(request: Request) {
         );
       }
 
+      const cost = user.permissions["products.view_cost"] ? Number(body.cost ?? existing.cost) : existing.cost;
+      const salePrice = Number(body.salePrice ?? existing.salePrice);
+      const minimumStock = Number(body.minimumStock ?? existing.minimumStock);
+      const targetStock = Number(body.targetStock ?? existing.targetStock);
+      const setFactor = Number(body.setFactor ?? existing.setFactor);
+      const boxFactor = Number(body.boxFactor ?? existing.boxFactor);
+      if (
+        !Number.isFinite(cost) || cost < 0 ||
+        !Number.isFinite(salePrice) || salePrice < 0 ||
+        !Number.isInteger(minimumStock) || minimumStock < 0 ||
+        !Number.isInteger(targetStock) || targetStock < 0 ||
+        !Number.isInteger(setFactor) || setFactor < 1 ||
+        !Number.isInteger(boxFactor) || boxFactor < 1
+      ) {
+        return Response.json(
+          { error: "Mínimos, objetivos y factores deben ser enteros válidos; costos y precios no pueden ser negativos." },
+          { status: 400 },
+        );
+      }
+
       await db
         .update(products)
         .set({
@@ -557,41 +576,17 @@ export async function POST(request: Request) {
             body.unit ?? "pieza",
           ),
 
-          cost: user.permissions[
-            "products.view_cost"
-          ]
-            ? Math.max(
-                0,
-                Number(
-                  body.cost ??
-                    existing.cost,
-                ),
-              )
-            : existing.cost,
-
-          salePrice: Math.max(
-            0,
-            Number(
-              body.salePrice ??
-                existing.salePrice,
-            ),
-          ),
-
-          minimumStock: Math.max(
-            0,
-            Number(
-              body.minimumStock ??
-                existing.minimumStock,
-            ),
-          ),
+          cost,
+          salePrice,
+          minimumStock,
 
           location: String(
             body.location ?? "",
           ),
 
-          targetStock: Math.max(0, Math.floor(Number(body.targetStock ?? existing.targetStock))),
-          setFactor: Math.max(1, Math.floor(Number(body.setFactor ?? existing.setFactor))),
-          boxFactor: Math.max(1, Math.floor(Number(body.boxFactor ?? existing.boxFactor))),
+          targetStock,
+          setFactor,
+          boxFactor,
         })
         .where(
           and(
@@ -601,7 +596,7 @@ export async function POST(request: Request) {
         );
 
       await recordAudit({ entityType: "product", entityId: id, action: "modificar", user,
-        before: existing, after: { sku, name, targetStock: body.targetStock, setFactor: body.setFactor, boxFactor: body.boxFactor } });
+        before: existing, after: { sku, name, cost, salePrice, minimumStock, targetStock, setFactor, boxFactor } });
 
       return Response.json({
         ok: true,
@@ -665,17 +660,22 @@ export async function POST(request: Request) {
       }
 
       const method = String(body.defaultPaymentMethod ?? "PUE").toUpperCase() === "PPD" ? "PPD" : "PUE";
+      const requestedCreditDays = Number(body.creditDays ?? 30);
+      if (method === "PPD" && (!Number.isInteger(requestedCreditDays) || requestedCreditDays < 1)) {
+        return Response.json({ error: "Los días de crédito deben ser un número entero mayor a cero." }, { status: 400 });
+      }
+      const creditDays = method === "PUE" ? 0 : requestedCreditDays;
       const result = await env.DB.prepare(`INSERT INTO clients
         (name, business_name, tax_id, phone, email, address, invoice_required,
           default_payment_method, credit_days, fiscal_postal_code, fiscal_regime, cfdi_use, active)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
         .bind(name, String(body.businessName ?? ""), String(body.taxId ?? "").toUpperCase(),
           String(body.phone ?? ""), String(body.email ?? ""), String(body.address ?? ""),
-          body.invoiceRequired ? 1 : 0, method, method === "PUE" ? 0 : Math.max(1, Number(body.creditDays ?? 30)),
+          body.invoiceRequired ? 1 : 0, method, creditDays,
           String(body.fiscalPostalCode ?? ""), String(body.fiscalRegime ?? ""), String(body.cfdiUse ?? "G03")).run();
       const clientId = Number(result.meta.last_row_id);
       await recordAudit({ entityType: "client", entityId: clientId, action: "crear", user,
-        after: { name, method, creditDays: body.creditDays } });
+        after: { name, method, creditDays } });
 
       return Response.json(
         { ok: true },
@@ -708,15 +708,20 @@ export async function POST(request: Request) {
       const before = await env.DB.prepare("SELECT * FROM clients WHERE id=? AND active=1 LIMIT 1").bind(id).first();
       if (!before) return Response.json({ error: "Cliente no encontrado." }, { status: 404 });
       const method = String(body.defaultPaymentMethod ?? "PUE").toUpperCase() === "PPD" ? "PPD" : "PUE";
+      const requestedCreditDays = Number(body.creditDays ?? 30);
+      if (method === "PPD" && (!Number.isInteger(requestedCreditDays) || requestedCreditDays < 1)) {
+        return Response.json({ error: "Los días de crédito deben ser un número entero mayor a cero." }, { status: 400 });
+      }
+      const creditDays = method === "PUE" ? 0 : requestedCreditDays;
       await env.DB.prepare(`UPDATE clients SET name=?, business_name=?, tax_id=?, phone=?, email=?, address=?,
         invoice_required=?, default_payment_method=?, credit_days=?, fiscal_postal_code=?, fiscal_regime=?, cfdi_use=?
         WHERE id=? AND active=1`)
         .bind(name, String(body.businessName ?? ""), String(body.taxId ?? "").toUpperCase(),
           String(body.phone ?? ""), String(body.email ?? ""), String(body.address ?? ""),
-          body.invoiceRequired ? 1 : 0, method, method === "PUE" ? 0 : Math.max(1, Number(body.creditDays ?? 30)),
+          body.invoiceRequired ? 1 : 0, method, creditDays,
           String(body.fiscalPostalCode ?? ""), String(body.fiscalRegime ?? ""), String(body.cfdiUse ?? "G03"), id).run();
       await recordAudit({ entityType: "client", entityId: id, action: "modificar", user, before,
-        after: { name, method, creditDays: body.creditDays } });
+        after: { name, method, creditDays } });
 
       return Response.json({
         ok: true,
@@ -760,6 +765,8 @@ export async function POST(request: Request) {
     // ==============================
 
     if (action === "add_movement") {
+      const movementDate = businessDate();
+      await assertBusinessDateOpen(movementDate);
       const productId = Number(
         body.productId,
       );
@@ -772,12 +779,25 @@ export async function POST(request: Request) {
         body.type ?? "",
       );
 
-      const requestedPresentations = Math.max(
-        1,
-        Math.floor(
-          Number(body.quantity ?? 0),
-        ),
+      const rawQuantity = Number(
+        body.quantity ?? 0,
       );
+
+      if (
+        !Number.isFinite(rawQuantity) ||
+        !Number.isInteger(rawQuantity) ||
+        rawQuantity < 1
+      ) {
+        return Response.json(
+          {
+            error:
+              "La cantidad debe ser un número entero mayor a cero.",
+          },
+          { status: 400 },
+        );
+      }
+
+      const requestedPresentations = rawQuantity;
 
       if (
         !productId ||
@@ -833,8 +853,11 @@ export async function POST(request: Request) {
         );
       }
 
-      const presentation = ["pieza", "unidad", "ciento", "juego", "caja"].includes(String(body.presentation))
-        ? String(body.presentation)
+      const requestedPresentation = String(
+        body.presentation ?? "pieza",
+      ).toLowerCase();
+      const presentation = ["pieza", "unidad", "ciento", "juego", "caja"].includes(requestedPresentation)
+        ? requestedPresentation
         : "pieza";
       const presentationFactor = presentation === "ciento"
         ? 100
@@ -935,15 +958,15 @@ export async function POST(request: Request) {
           presentation,
           presentationFactor,
           user.id,
-          businessDate(),
+          movementDate,
         ),
 
         env.DB.prepare(`
           UPDATE products
-          SET current_stock = ?
+          SET current_stock = current_stock + ?
           WHERE id = ?
         `).bind(
-          newStock,
+          delta,
           productId,
         ),
       ]);
@@ -1008,7 +1031,10 @@ export async function POST(request: Request) {
             id,
             product_id,
             delta,
-            voided
+            voided,
+            COALESCE(NULLIF(business_date, ''), substr(created_at, 1, 10)) AS business_date,
+            source_type,
+            source_id
           FROM movements
           WHERE id = ?
           LIMIT 1
@@ -1019,6 +1045,9 @@ export async function POST(request: Request) {
             product_id: number;
             delta: number;
             voided: number;
+            business_date: string;
+            source_type: string;
+            source_id: number | null;
           }>();
 
       if (!movement) {
@@ -1037,6 +1066,15 @@ export async function POST(request: Request) {
             error:
               "Ese movimiento ya fue anulado.",
           },
+          { status: 409 },
+        );
+      }
+
+      await assertBusinessDateOpen(movement.business_date);
+
+      if (movement.source_type === "purchase_receipt") {
+        return Response.json(
+          { error: "Este movimiento pertenece a una recepción de pedido y no puede anularse por separado porque desincronizaría sus cantidades recibidas." },
           { status: 409 },
         );
       }
@@ -1084,10 +1122,10 @@ export async function POST(request: Request) {
       await env.DB.batch([
         env.DB.prepare(`
           UPDATE products
-          SET current_stock = ?
+          SET current_stock = current_stock - ?
           WHERE id = ?
         `).bind(
-          correctedStock,
+          movement.delta,
           movement.product_id,
         ),
 
@@ -1096,10 +1134,12 @@ export async function POST(request: Request) {
           SET
             voided = 1,
             voided_by = ?,
-            voided_at = CURRENT_TIMESTAMP
+            voided_at = CURRENT_TIMESTAMP,
+            void_reason = ?
           WHERE id = ?
         `).bind(
           performedBy,
+          reason,
           id,
         ),
       ]);
@@ -1124,6 +1164,7 @@ export async function POST(request: Request) {
     // ==============================
 
     if (action === "add_credit_note") {
+      await assertBusinessDateOpen(businessDate());
       requirePermission(
         user,
         "credit_notes.create",
@@ -1139,9 +1180,10 @@ export async function POST(request: Request) {
         body.clientId,
       );
 
-      const amount = Number(
+      const rawAmount = Number(
         body.amount ?? 0,
       );
+      const amount = Math.round((rawAmount + Number.EPSILON) * 100) / 100;
 
       const reason = String(
         body.reason ?? "",
@@ -1150,6 +1192,7 @@ export async function POST(request: Request) {
       if (
         !folio ||
         !clientId ||
+        !Number.isFinite(rawAmount) ||
         amount <= 0 ||
         !reason
       ) {
@@ -1161,6 +1204,9 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
+
+      const client = await env.DB.prepare("SELECT id FROM clients WHERE id=? AND active=1 LIMIT 1").bind(clientId).first();
+      if (!client) return Response.json({ error: "Cliente no encontrado o inactivo." }, { status: 404 });
 
       const result = await env.DB.prepare(`INSERT INTO credit_notes
         (folio, client_id, amount, reason, sale_reference, status, notes, active)
@@ -1180,6 +1226,7 @@ export async function POST(request: Request) {
       action ===
       "update_credit_status"
     ) {
+      await assertBusinessDateOpen(businessDate());
       requirePermission(
         user,
         "credit_notes.status",
@@ -1208,7 +1255,9 @@ export async function POST(request: Request) {
         );
       }
 
-      const before = await env.DB.prepare("SELECT * FROM credit_notes WHERE id=? LIMIT 1").bind(id).first();
+      const before = await env.DB.prepare("SELECT * FROM credit_notes WHERE id=? AND active=1 LIMIT 1").bind(id).first<{ status: string }>();
+      if (!before) return Response.json({ error: "Nota de crédito no encontrada." }, { status: 404 });
+      if (before.status === "Cancelada") return Response.json({ error: "Una nota cancelada no puede cambiar de estatus." }, { status: 409 });
       await db
         .update(creditNotes)
         .set({
@@ -1232,6 +1281,7 @@ export async function POST(request: Request) {
       action ===
       "delete_credit_note"
     ) {
+      await assertBusinessDateOpen(businessDate());
       requirePermission(
         user,
         "credit_notes.delete",
@@ -1250,23 +1300,29 @@ export async function POST(request: Request) {
         );
       }
 
+      const before = await env.DB.prepare("SELECT * FROM credit_notes WHERE id=? AND active=1 LIMIT 1").bind(id).first<{ status: string }>();
+      if (!before) return Response.json({ error: "Nota de crédito no encontrada." }, { status: 404 });
+      if (before.status === "Cancelada") return Response.json({ error: "La nota de crédito ya está cancelada." }, { status: 409 });
+
       await env.DB.prepare(`
         UPDATE credit_notes
         SET
           active = 1,
           status = 'Cancelada',
           voided_by = ?,
-          voided_at = CURRENT_TIMESTAMP
+          voided_at = CURRENT_TIMESTAMP,
+          void_reason = ?
         WHERE id = ?
       `)
         .bind(
           performedBy,
+          reason,
           id,
         )
         .run();
 
       await recordAudit({ entityType: "credit_note", entityId: id, action: "cancelar", user,
-        after: { status: "Cancelada" }, reason });
+        before, after: { status: "Cancelada" }, reason });
 
       return Response.json({
         ok: true,

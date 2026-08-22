@@ -12,8 +12,15 @@
     {
       "idx": 1,
       "version": "6",
-      "when": 1787396528412,
-      "tag": "0001_fast_whistler",
+      "when": 1787397827228,
+      "tag": "0001_mature_lilith",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787403600000,
+      "tag": "0002_civ_operations",
       "breakpoints": true
     }
   ]
