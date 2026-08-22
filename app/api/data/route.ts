@@ -84,23 +84,58 @@ export async function POST(request: Request) {
     const action = String(body.action ?? "");
     const performedBy = user.displayName;
 
-    if (action === "add_product") {
-      requirePermission(user, "products.create");
-      const sku = String(body.sku ?? "").trim().toUpperCase();
-      const name = String(body.name ?? "").trim();
-      const initialStock = Math.max(0, Number(body.initialStock ?? 0));
-      if (!sku || !name) return Response.json({ error: "SKU y producto son obligatorios." }, { status: 400 });
-      const [product] = await db.insert(products).values({
-        sku, name, category: String(body.category ?? "General"), unit: String(body.unit ?? "pieza"),
-        cost: Math.max(0, Number(body.cost ?? 0)), salePrice: Math.max(0, Number(body.salePrice ?? 0)),
-        currentStock: initialStock, minimumStock: Math.max(0, Number(body.minimumStock ?? 0)),
-        location: String(body.location ?? ""), active: 1,
-      }).returning();
-      if (initialStock > 0) await db.insert(movements).values({
-        productId: product.id, type: "inventario_inicial", quantity: initialStock, delta: initialStock,
-        reference: "ALTA", notes: "Inventario al registrar el producto", performedBy,
-      });
-      return Response.json({ ok: true }, { status: 201 });
+if (action === "add_product") {
+  requirePermission(user, "products.create");
+
+  const sku = String(body.sku ?? "").trim().toUpperCase();
+  const name = String(body.name ?? "").trim();
+  const initialStock = Math.max(0, Math.floor(Number(body.initialStock ?? 0)));
+  const category = String(body.category ?? "General");
+  const unit = String(body.unit ?? "pieza");
+  const cost = Math.max(0, Number(body.cost ?? 0));
+  const salePrice = Math.max(0, Number(body.salePrice ?? 0));
+  const minimumStock = Math.max(0, Math.floor(Number(body.minimumStock ?? 0)));
+  const location = String(body.location ?? "");
+
+  if (!sku || !name) {
+    return Response.json(
+      { error: "SKU y producto son obligatorios." },
+      { status: 400 }
+    );
+  }
+
+  const result = await env.DB.prepare(`
+    INSERT INTO products
+      (sku, name, category, unit, cost, sale_price, current_stock, minimum_stock, location, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `)
+    .bind(
+      sku,
+      name,
+      category,
+      unit,
+      cost,
+      salePrice,
+      initialStock,
+      minimumStock,
+      location
+    )
+    .run();
+
+  const productId = Number(result.meta.last_row_id);
+
+  if (initialStock > 0) {
+    await env.DB.prepare(`
+      INSERT INTO movements
+        (product_id, type, quantity, delta, reference, notes, performed_by)
+      VALUES (?, 'inventario_inicial', ?, ?, 'ALTA', 'Inventario al registrar el producto', ?)
+    `)
+      .bind(productId, initialStock, initialStock, performedBy)
+      .run();
+  }
+
+  return Response.json({ ok: true }, { status: 201 });
+}
     }
 
     if (action === "edit_product") {
