@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 
 export const SESSION_COOKIE = "herra_session";
 const SESSION_DAYS = 7;
-const PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_ITERATIONS = 100_000;
 
 export const PERMISSION_KEYS = [
   "products.create",
