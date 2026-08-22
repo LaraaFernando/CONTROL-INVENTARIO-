@@ -18,7 +18,7 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-         database_name: "control-inventario-db",
+          database_name: "control-inventario-db",
           database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]

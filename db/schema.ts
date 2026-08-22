@@ -12,6 +12,7 @@ export const products = sqliteTable("products", {
   currentStock: integer("current_stock").notNull().default(0),
   minimumStock: integer("minimum_stock").notNull().default(0),
   location: text("location").notNull().default(""),
+  active: integer("active").notNull().default(1),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 

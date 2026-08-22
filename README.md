@@ -91,3 +91,23 @@ La interfaz incluye soporte para Safari en iPhone y para instalación desde **Co
 El repositorio incluye GitHub Actions en `.github/workflows/`. Para una actualización futura, sube **un solo archivo `.zip` a la raíz de `main`**. El workflow valida que corresponda a este proyecto, conserva `.github`, reemplaza el código, elimina el ZIP y crea el commit de actualización. Después, el workflow de verificación instala dependencias y compila/prueba la aplicación.
 
 > Importante: en **Settings → Actions → General → Workflow permissions**, selecciona **Read and write permissions** para permitir que el workflow guarde la actualización.
+
+## Seguridad y permisos (v2)
+
+La aplicación incluye autenticación propia para Cloudflare D1:
+
+- Primer acceso: si no existen usuarios, la pantalla inicial permite crear el **Administrador inicial**.
+- Contraseñas derivadas con PBKDF2 + salt; no se guardan contraseñas en texto plano.
+- Sesiones mediante cookie `HttpOnly`, `Secure` y `SameSite=Lax`.
+- Roles base: Administrador, Almacén, Ventas, Crédito / Administración y Solo consulta.
+- Permisos individuales por usuario para productos, costos, movimientos, notas de crédito y administración de usuarios.
+- La API valida cada permiso en el servidor; ocultar un botón no es la única protección.
+- Los movimientos registran el nombre del usuario que los realizó.
+
+### Productos
+
+Los usuarios autorizados pueden modificar datos maestros del producto. La existencia se modifica únicamente mediante Movimientos para preservar la trazabilidad. La opción **Eliminar** realiza una baja lógica: oculta el producto del inventario activo, pero conserva sus movimientos históricos.
+
+### Instalación en iPhone
+
+La versión actual es una PWA. Desde Safari abre la URL de producción y usa **Compartir → Añadir a pantalla de inicio → Añadir**. Se abrirá en modo standalone con icono propio. Una versión `.ipa` para TestFlight/App Store sería una fase posterior y requiere el flujo de Apple Developer.
