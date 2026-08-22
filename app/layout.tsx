@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import PwaUpdater from "./pwa-updater";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://control-inventario-negocio.messi020306.chatgpt.site"),
@@ -50,7 +51,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body>{children}<PwaUpdater /></body>
     </html>
   );
 }
