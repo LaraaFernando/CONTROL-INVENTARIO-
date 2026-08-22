@@ -9,16 +9,25 @@ import {
   isRole,
   normalizeUsername,
   permissionsFor,
-  requirePermission,
   requireUser,
   sanitizePermissionOverrides,
   validateCredentials,
 } from "../../auth";
 
+async function requireAccessManager(request: Request) {
+  const actor = await requireUser(request);
+  if (actor.role !== "superadmin") throw new AuthError("Solo los administradores principales pueden gestionar usuarios y permisos.", 403);
+  return actor;
+}
+
+async function activeSuperadminCount() {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE role='superadmin' AND active=1").first<{total:number}>();
+  return Number(row?.total ?? 0);
+}
+
 export async function GET(request: Request) {
   try {
-    const actor = await requireUser(request);
-    requirePermission(actor, "users.manage");
+    const actor = await requireAccessManager(request);
     const rows = await env.DB.prepare(`
       SELECT id, username, display_name, role, permissions, active, created_at
       FROM users ORDER BY active DESC, display_name COLLATE NOCASE
@@ -35,14 +44,15 @@ export async function GET(request: Request) {
       permissionLabels: PERMISSION_LABELS,
       permissionKeys: PERMISSION_KEYS,
       currentUserId: actor.id,
+      superadminLimit: 2,
+      activeSuperadmins: await activeSuperadminCount(),
     });
   } catch (error) { return response(error); }
 }
 
 export async function POST(request: Request) {
   try {
-    const actor = await requireUser(request);
-    requirePermission(actor, "users.manage");
+    const actor = await requireAccessManager(request);
     const body = await request.json() as Record<string, unknown>;
     const action = String(body.action ?? "");
 
@@ -52,9 +62,10 @@ export async function POST(request: Request) {
       const displayName = String(body.displayName ?? "").trim();
       const roleRaw = String(body.role ?? "consulta");
       if (!isRole(roleRaw)) throw new AuthError("Rol inválido.", 400);
+      if (roleRaw === "superadmin" && await activeSuperadminCount() >= 2) throw new AuthError("Solo puede haber 2 administradores principales activos.", 409);
       validateCredentials(username, password);
       const { hash, salt } = await hashPassword(password);
-      const overrides = sanitizePermissionOverrides(body.permissions);
+      const overrides = roleRaw === "superadmin" ? {} : sanitizePermissionOverrides(body.permissions);
       await env.DB.prepare(`
         INSERT INTO users (username, display_name, password_hash, password_salt, role, permissions)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -66,9 +77,13 @@ export async function POST(request: Request) {
       const id = Number(body.id);
       const roleRaw = String(body.role ?? "consulta");
       if (!id || !isRole(roleRaw)) throw new AuthError("Datos de usuario inválidos.", 400);
+      const current = await env.DB.prepare("SELECT role, active FROM users WHERE id=? LIMIT 1").bind(id).first<{role:string;active:number}>();
+      if (!current) throw new AuthError("Usuario no encontrado.", 404);
+      if (id === actor.id && roleRaw !== "superadmin") throw new AuthError("No puedes quitarte tu propio perfil de administrador principal.", 400);
+      if (roleRaw === "superadmin" && current.role !== "superadmin" && current.active && await activeSuperadminCount() >= 2) throw new AuthError("Solo puede haber 2 administradores principales activos.", 409);
+      if (current.role === "superadmin" && roleRaw !== "superadmin" && current.active && await activeSuperadminCount() <= 1) throw new AuthError("Debe existir al menos un administrador principal activo.", 409);
       const displayName = String(body.displayName ?? "").trim();
-      const overrides = sanitizePermissionOverrides(body.permissions);
-      if (id === actor.id && roleRaw !== "admin") throw new AuthError("No puedes quitarte tu propio rol de administrador.", 400);
+      const overrides = roleRaw === "superadmin" ? {} : sanitizePermissionOverrides(body.permissions);
       await env.DB.prepare("UPDATE users SET display_name=?, role=?, permissions=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
         .bind(displayName || "Usuario", roleRaw, JSON.stringify(overrides), id).run();
       return Response.json({ ok: true });
@@ -77,7 +92,11 @@ export async function POST(request: Request) {
     if (action === "toggle_user") {
       const id = Number(body.id); const active = Boolean(body.active);
       if (!id) throw new AuthError("Usuario inválido.", 400);
+      const current = await env.DB.prepare("SELECT role, active FROM users WHERE id=? LIMIT 1").bind(id).first<{role:string;active:number}>();
+      if (!current) throw new AuthError("Usuario no encontrado.", 404);
       if (id === actor.id && !active) throw new AuthError("No puedes desactivar tu propia cuenta.", 400);
+      if (current.role === "superadmin" && !active && current.active && await activeSuperadminCount() <= 1) throw new AuthError("Debe existir al menos un administrador principal activo.", 409);
+      if (current.role === "superadmin" && active && !current.active && await activeSuperadminCount() >= 2) throw new AuthError("Solo puede haber 2 administradores principales activos.", 409);
       await env.DB.prepare("UPDATE users SET active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(active ? 1 : 0, id).run();
       if (!active) await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(id).run();
       return Response.json({ ok: true });

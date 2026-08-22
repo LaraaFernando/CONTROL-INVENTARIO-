@@ -10,22 +10,27 @@ export const PERMISSION_KEYS = [
   "products.delete",
   "products.view_cost",
   "clients.create",
+  "clients.edit",
+  "clients.delete",
   "movements.purchase",
   "movements.sale",
   "movements.defective",
   "movements.returns",
   "movements.adjust",
+  "movements.delete",
   "credit_notes.create",
   "credit_notes.status",
+  "credit_notes.delete",
   "users.manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
-export type Role = "admin" | "almacen" | "ventas" | "credito" | "consulta";
+export type Role = "superadmin" | "admin" | "almacen" | "ventas" | "credito" | "consulta";
 export type PermissionMap = Record<PermissionKey, boolean>;
 
 export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Administrador",
+  superadmin: "Administrador principal",
+  admin: "Administrador operativo",
   almacen: "Almacén",
   ventas: "Ventas",
   credito: "Crédito / Administración",
@@ -38,13 +43,17 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   "products.delete": "Eliminar/desactivar productos",
   "products.view_cost": "Ver costos y valor del inventario",
   "clients.create": "Crear clientes",
+  "clients.edit": "Modificar clientes",
+  "clients.delete": "Eliminar/desactivar clientes",
   "movements.purchase": "Registrar entradas por compra",
   "movements.sale": "Registrar ventas",
   "movements.defective": "Registrar producto defectuoso",
   "movements.returns": "Registrar devoluciones",
   "movements.adjust": "Realizar ajustes de inventario",
+  "movements.delete": "Anular/eliminar movimientos y ventas",
   "credit_notes.create": "Crear notas de crédito",
   "credit_notes.status": "Aplicar/cancelar notas de crédito",
+  "credit_notes.delete": "Eliminar/anular notas de crédito",
   "users.manage": "Administrar usuarios y permisos",
 };
 
@@ -52,7 +61,8 @@ const ALL = Object.fromEntries(PERMISSION_KEYS.map((key) => [key, true])) as Per
 const NONE = Object.fromEntries(PERMISSION_KEYS.map((key) => [key, false])) as PermissionMap;
 
 export const ROLE_DEFAULTS: Record<Role, PermissionMap> = {
-  admin: { ...ALL },
+  superadmin: { ...ALL },
+  admin: { ...ALL, "users.manage": false },
   almacen: {
     ...NONE,
     "products.create": true,
@@ -66,12 +76,14 @@ export const ROLE_DEFAULTS: Record<Role, PermissionMap> = {
   ventas: {
     ...NONE,
     "clients.create": true,
+    "clients.edit": true,
     "movements.sale": true,
     "movements.returns": true,
   },
   credito: {
     ...NONE,
     "clients.create": true,
+    "clients.edit": true,
     "credit_notes.create": true,
     "credit_notes.status": true,
   },
@@ -127,6 +139,28 @@ async function initializeSchema() {
     await db.prepare("ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1").run();
   }
 
+  const clientInfo = await db.prepare("PRAGMA table_info(clients)").all<{ name: string }>();
+  if (!clientInfo.results.some((column) => column.name === "active")) {
+    await db.prepare("ALTER TABLE clients ADD COLUMN active INTEGER NOT NULL DEFAULT 1").run();
+  }
+
+  const movementInfo = await db.prepare("PRAGMA table_info(movements)").all<{ name: string }>();
+  if (!movementInfo.results.some((column) => column.name === "voided")) await db.prepare("ALTER TABLE movements ADD COLUMN voided INTEGER NOT NULL DEFAULT 0").run();
+  if (!movementInfo.results.some((column) => column.name === "voided_by")) await db.prepare("ALTER TABLE movements ADD COLUMN voided_by TEXT NOT NULL DEFAULT ''").run();
+  if (!movementInfo.results.some((column) => column.name === "voided_at")) await db.prepare("ALTER TABLE movements ADD COLUMN voided_at TEXT").run();
+
+  const creditInfo = await db.prepare("PRAGMA table_info(credit_notes)").all<{ name: string }>();
+  if (!creditInfo.results.some((column) => column.name === "active")) await db.prepare("ALTER TABLE credit_notes ADD COLUMN active INTEGER NOT NULL DEFAULT 1").run();
+  if (!creditInfo.results.some((column) => column.name === "voided_by")) await db.prepare("ALTER TABLE credit_notes ADD COLUMN voided_by TEXT NOT NULL DEFAULT ''").run();
+  if (!creditInfo.results.some((column) => column.name === "voided_at")) await db.prepare("ALTER TABLE credit_notes ADD COLUMN voided_at TEXT").run();
+
+  // Si una instalación anterior ya tenía un administrador, conservarlo como uno de los dos administradores principales.
+  const superCount = await db.prepare("SELECT COUNT(*) AS total FROM users WHERE role='superadmin' AND active=1").first<{ total: number }>();
+  if (Number(superCount?.total ?? 0) === 0) {
+    const firstAdmin = await db.prepare("SELECT id FROM users WHERE role='admin' AND active=1 ORDER BY id LIMIT 1").first<{ id: number }>();
+    if (firstAdmin) await db.prepare("UPDATE users SET role='superadmin', permissions='{}', updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(firstAdmin.id).run();
+  }
+
   await db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
 }
 
@@ -137,7 +171,7 @@ export async function hasUsers() {
 }
 
 export function permissionsFor(role: Role, overrides: Partial<PermissionMap> = {}): PermissionMap {
-  if (role === "admin") return { ...ALL };
+  if (role === "superadmin") return { ...ALL };
   return { ...ROLE_DEFAULTS[role], ...overrides };
 }
 
@@ -189,7 +223,7 @@ export async function createInitialAdmin(username: string, displayName: string, 
   const { hash, salt } = await hashPassword(password);
   const result = await env.DB.prepare(`
     INSERT INTO users (username, display_name, password_hash, password_salt, role, permissions)
-    VALUES (?, ?, ?, ?, 'admin', '{}')
+    VALUES (?, ?, ?, ?, 'superadmin', '{}')
   `).bind(normalizeUsername(username), displayName.trim() || "Administrador", hash, salt).run();
   return Number(result.meta.last_row_id);
 }
@@ -259,7 +293,7 @@ export function normalizeUsername(value: string) {
 }
 
 export function isRole(value: string): value is Role {
-  return ["admin", "almacen", "ventas", "credito", "consulta"].includes(value);
+  return ["superadmin", "admin", "almacen", "ventas", "credito", "consulta"].includes(value);
 }
 
 export function sanitizePermissionOverrides(value: unknown): Partial<PermissionMap> {

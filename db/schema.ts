@@ -24,6 +24,7 @@ export const clients = sqliteTable("clients", {
   phone: text("phone").notNull().default(""),
   email: text("email").notNull().default(""),
   address: text("address").notNull().default(""),
+  active: integer("active").notNull().default(1),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -37,6 +38,9 @@ export const movements = sqliteTable("movements", {
   reference: text("reference").notNull().default(""),
   notes: text("notes").notNull().default(""),
   performedBy: text("performed_by").notNull().default(""),
+  voided: integer("voided").notNull().default(0),
+  voidedBy: text("voided_by").notNull().default(""),
+  voidedAt: text("voided_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -49,5 +53,8 @@ export const creditNotes = sqliteTable("credit_notes", {
   reason: text("reason").notNull(),
   status: text("status").notNull().default("Pendiente"),
   notes: text("notes").notNull().default(""),
+  active: integer("active").notNull().default(1),
+  voidedBy: text("voided_by").notNull().default(""),
+  voidedAt: text("voided_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

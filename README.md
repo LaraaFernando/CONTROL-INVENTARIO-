@@ -111,3 +111,14 @@ Los usuarios autorizados pueden modificar datos maestros del producto. La existe
 ### Instalación en iPhone
 
 La versión actual es una PWA. Desde Safari abre la URL de producción y usa **Compartir → Añadir a pantalla de inicio → Añadir**. Se abrirá en modo standalone con icono propio. Una versión `.ipa` para TestFlight/App Store sería una fase posterior y requiere el flujo de Apple Developer.
+
+## Seguridad y control de acceso v3
+
+- La primera cuenta se crea como **Administrador principal**.
+- Puede existir un máximo de **2 administradores principales activos**. Solo estos dos perfiles pueden crear usuarios, cambiar roles y asignar/revocar permisos.
+- El rol **Administrador operativo** conserva acceso amplio a la operación, pero no puede administrar usuarios ni permisos.
+- Se agregaron permisos separados para editar/eliminar clientes, anular movimientos/ventas y eliminar notas de crédito.
+- Las ventas se registran desde **Movimientos** usando el tipo **Venta**.
+- Al anular un movimiento, la aplicación revierte automáticamente su efecto en inventario y conserva el registro marcado como anulado para auditoría.
+- Productos, clientes y notas de crédito usan baja lógica para conservar referencias históricas.
+- PBKDF2 usa 100,000 iteraciones para compatibilidad con Cloudflare Workers.
