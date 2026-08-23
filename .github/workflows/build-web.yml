@@ -41,22 +41,23 @@ jobs:
         run: npm test
 
       - name: Verificar versión publicada en Cloudflare
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'pull_request'
         env:
           PROD_URL: https://control-inventario.laraafernando.workers.dev
         run: |
           set -euo pipefail
           expected="$(tr -d '\r\n ' < public/release.json)"
-          echo "Esperando que Cloudflare publique la versión integrada en main..."
-          for attempt in $(seq 1 30); do
+          echo "Comprobando la versión servida por el Worker real..."
+          for attempt in $(seq 1 18); do
             actual="$(curl -fsS --connect-timeout 10 --max-time 20 "$PROD_URL/release.json" 2>/dev/null | tr -d '\r\n ' || true)"
             if [ "$actual" = "$expected" ]; then
               curl -fsS --connect-timeout 10 --max-time 20 "$PROD_URL/" >/dev/null
               echo "Producción verificada: $PROD_URL"
+              echo "Release confirmado: $actual"
               exit 0
             fi
-            echo "Intento $attempt/30: la versión productiva todavía no coincide."
+            echo "Intento $attempt/18: producción todavía no sirve la versión esperada."
             sleep 10
           done
-          echo "::error::Cloudflare no publicó la versión esperada de public/release.json dentro del tiempo de espera."
+          echo "::error::La versión del Worker no coincide con public/release.json."
           exit 1
