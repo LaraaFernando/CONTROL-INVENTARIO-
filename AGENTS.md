@@ -5,7 +5,8 @@
 - La fuente de verdad es `LaraaFernando/CONTROL-INVENTARIO-` en GitHub; `main` representa el código aprobado.
 - No afirmes que una modificación está publicada si sólo existe en un checkout local, un worktree, una rama o un PR.
 - Antes de trabajar, parte del `main` remoto más reciente y usa una rama `codex/*`. No empujes cambios de aplicación directamente a `main`.
-- Este proyecto se publica con OpenAI Sites sobre Cloudflare. Reutiliza siempre el `project_id` existente en `.openai/hosting.json`; no crees otro Site, Worker, D1 o despliegue paralelo y no ejecutes `wrangler deploy` salvo que el usuario pida explícitamente una migración de infraestructura.
+- La producción oficial que consume la PWA instalada es el Worker existente `control-inventario`, en `https://control-inventario.laraafernando.workers.dev`. Un despliegue únicamente en `chatgpt.site` no completa la entrega.
+- Conserva `.openai/hosting.json` para compatibilidad del proyecto, pero no crees otro Site, Worker o D1. Reutiliza siempre `control-inventario` y `control-inventario-db`.
 
 ## Validación obligatoria
 
@@ -30,7 +31,7 @@ Salvo que el usuario pida explícitamente un borrador o trabajo local, una solic
 3. Guardar los cambios en GitHub y abrir un PR hacia `main`.
 4. Esperar a que GitHub Actions termine correctamente.
 5. Integrar el PR sólo cuando sea fusionable y las comprobaciones estén en verde.
-6. Publicar mediante Sites el código exacto integrado, usando el proyecto ya existente.
+6. Publicar el código exacto integrado en el Worker existente `control-inventario`, conservando su D1.
 7. Esperar a que el despliegue indique `succeeded`.
 8. Abrir la URL productiva y realizar una comprobación real y no destructiva del cambio solicitado.
 
@@ -43,7 +44,7 @@ La respuesta final de una entrega debe incluir:
 - enlace del PR;
 - enlace o SHA del commit integrado en `main`;
 - resultado y enlace de GitHub Actions;
-- número de versión de Sites y URL productiva;
+- identificador o evidencia del despliegue de Cloudflare y URL productiva;
 - qué se comprobó en la aplicación publicada.
 
 La aplicación del iPhone es una PWA: consume la URL productiva, no una copia del checkout local. Después de un despliegue, verifica también que la actualización pueda recibirse al recargar o mediante el aviso “Nueva versión disponible”.

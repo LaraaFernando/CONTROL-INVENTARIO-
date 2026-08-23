@@ -3,7 +3,7 @@ import "./globals.css";
 import PwaUpdater from "./pwa-updater";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://control-inventario-negocio.messi020306.chatgpt.site"),
+  metadataBase: new URL("https://control-inventario.laraafernando.workers.dev"),
   title: "CIV — Control de Inventario y Ventas",
   description: "Inventario, movimientos, clientes y notas de crédito en un solo lugar.",
   applicationName: "CIV",

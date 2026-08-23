@@ -1,4 +1,5 @@
-const CACHE = "civ-shell-v1";
+// Bump the shell version when a release must be surfaced to installed PWAs.
+const CACHE = "civ-shell-v2";
 const SHELL = ["/manifest.webmanifest", "/favicon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"];
 self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
 self.addEventListener("message", event => { if (event.data?.type === "SKIP_WAITING") self.skipWaiting(); });

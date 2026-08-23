@@ -25,10 +25,10 @@ Aplicación web para controlar productos, existencias, movimientos diarios, clie
 
 - **Código fuente:** [GitHub — LaraaFernando/CONTROL-INVENTARIO-](https://github.com/LaraaFernando/CONTROL-INVENTARIO-).
 - **Trabajo con la computadora apagada:** entorno de Codex Cloud `LaraaFernando/CONTROL-INVENTARIO-`.
-- **Alojamiento:** OpenAI Sites sobre Cloudflare Workers y D1.
-- **Aplicación publicada:** [control-inventario-negocio.messi020306.chatgpt.site](https://control-inventario-negocio.messi020306.chatgpt.site).
+- **Alojamiento:** Cloudflare Workers y D1.
+- **Aplicación publicada:** [control-inventario.laraafernando.workers.dev](https://control-inventario.laraafernando.workers.dev).
 
-Un commit en GitHub todavía no es una publicación. La entrega queda completa cuando el PR se integra, GitHub Actions termina correctamente, Sites publica esa versión y se comprueba la URL productiva.
+Un commit en GitHub todavía no es una publicación. La entrega queda completa cuando el PR se integra, GitHub Actions termina correctamente, Cloudflare publica esa versión en el Worker `control-inventario` y se comprueba la URL productiva.
 
 ## Cambios desde el celular con la computadora apagada
 
