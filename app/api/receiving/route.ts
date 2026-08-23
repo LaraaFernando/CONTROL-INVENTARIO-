@@ -1,0 +1,322 @@
+import { env } from "cloudflare:workers";
+import { AuthError, requirePermission, requireUser } from "../../auth";
+import { assertBusinessDateOpen, businessDate, ensureOperationalSchema, recordAudit } from "../../../db/operations";
+
+type ReceiptInput = {
+  itemId?: unknown;
+  received?: unknown;
+  damaged?: unknown;
+};
+
+function text(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function nonNegativeInteger(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isInteger(number) && number >= 0 ? number : null;
+}
+
+function errorResponse(error: unknown) {
+  if (error instanceof AuthError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  const message = error instanceof Error ? error.message : "Error inesperado";
+  return Response.json({ error: message }, { status: 500 });
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireUser(request);
+    requirePermission(user, "orders.manage");
+    await ensureOperationalSchema();
+
+    const body = (await request.json()) as Record<string, unknown>;
+    const orderId = Number(body.orderId || 0);
+    const entries = Array.isArray(body.items) ? (body.items as ReceiptInput[]) : [];
+    const reason = text(body.reason);
+    const notes = text(body.notes);
+
+    if (!orderId || !entries.length) {
+      throw new AuthError("Selecciona un pedido y captura al menos una partida.", 400);
+    }
+
+    const order = await env.DB.prepare(
+      "SELECT id, folio, canceled FROM purchase_orders WHERE id=? LIMIT 1",
+    )
+      .bind(orderId)
+      .first<{ id: number; folio: string; canceled: number }>();
+
+    if (!order || order.canceled) {
+      throw new AuthError("Pedido no encontrado o cancelado.", 404);
+    }
+
+    const date = businessDate();
+    await assertBusinessDateOpen(date);
+
+    const normalized: Array<{
+      itemId: number;
+      productId: number;
+      productName: string;
+      code: string;
+      ordered: number;
+      receivedBefore: number;
+      pendingBefore: number;
+      physicalReceived: number;
+      damaged: number;
+      goodReceived: number;
+      appliedToOrder: number;
+      excessAccepted: number;
+      shortage: number;
+      pendingAfter: number;
+      unitCost: number;
+      previousStock: number;
+      newStock: number;
+    }> = [];
+
+    const seen = new Set<number>();
+    let requiresReason = false;
+    let physicalTotal = 0;
+
+    for (const entry of entries) {
+      const itemId = Number(entry.itemId || 0);
+      const physicalReceived = nonNegativeInteger(entry.received);
+      const damaged = nonNegativeInteger(entry.damaged);
+
+      if (!itemId || physicalReceived === null || damaged === null) {
+        throw new AuthError("Hay cantidades inválidas en la recepción.", 400);
+      }
+      if (seen.has(itemId)) {
+        throw new AuthError("Cada partida solo puede aparecer una vez por recepción.", 400);
+      }
+      seen.add(itemId);
+      if (damaged > physicalReceived) {
+        throw new AuthError("La cantidad dañada no puede ser mayor a la cantidad recibida.", 400);
+      }
+
+      const item = await env.DB.prepare(`
+        SELECT i.id, i.product_id, i.ordered_quantity, i.received_quantity, i.unit_cost,
+          p.current_stock, p.name, p.sku
+        FROM purchase_order_items i
+        INNER JOIN products p ON p.id = i.product_id
+        WHERE i.id=? AND i.order_id=?
+        LIMIT 1
+      `)
+        .bind(itemId, orderId)
+        .first<{
+          id: number;
+          product_id: number;
+          ordered_quantity: number;
+          received_quantity: number;
+          unit_cost: number;
+          current_stock: number;
+          name: string;
+          sku: string;
+        }>();
+
+      if (!item) {
+        throw new AuthError("Partida de pedido inválida.", 400);
+      }
+
+      const ordered = Number(item.ordered_quantity);
+      const receivedBefore = Number(item.received_quantity);
+      const pendingBefore = Math.max(ordered - receivedBefore, 0);
+      const goodReceived = physicalReceived - damaged;
+      const appliedToOrder = Math.min(goodReceived, pendingBefore);
+      const excessAccepted = Math.max(goodReceived - pendingBefore, 0);
+      const shortage = Math.max(pendingBefore - goodReceived, 0);
+      const pendingAfter = Math.max(pendingBefore - appliedToOrder, 0);
+      const previousStock = Number(item.current_stock);
+
+      if (physicalReceived !== pendingBefore || damaged > 0) {
+        requiresReason = true;
+      }
+
+      physicalTotal += physicalReceived;
+      normalized.push({
+        itemId,
+        productId: Number(item.product_id),
+        productName: item.name,
+        code: item.sku,
+        ordered,
+        receivedBefore,
+        pendingBefore,
+        physicalReceived,
+        damaged,
+        goodReceived,
+        appliedToOrder,
+        excessAccepted,
+        shortage,
+        pendingAfter,
+        unitCost: Number(item.unit_cost),
+        previousStock,
+        newStock: previousStock + goodReceived,
+      });
+    }
+
+    if (physicalTotal <= 0) {
+      throw new AuthError("Captura al menos una cantidad recibida mayor a cero.", 400);
+    }
+    if (requiresReason && !reason) {
+      throw new AuthError("Cuando hay faltante, sobrante o mercancía dañada debes indicar el motivo.", 400);
+    }
+
+    const receiptNotes = [
+      reason ? `Motivo de diferencia: ${reason}` : "",
+      notes ? `Notas: ${notes}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    const receipt = await env.DB.prepare(`
+      INSERT INTO purchase_receipts (order_id, received_by_user_id, received_by, notes)
+      VALUES (?, ?, ?, ?)
+    `)
+      .bind(orderId, user.id, user.displayName, receiptNotes)
+      .run();
+    const receiptId = Number(receipt.meta.last_row_id);
+
+    const statements: ReturnType<typeof env.DB.prepare>[] = [];
+
+    for (const entry of normalized) {
+      if (entry.physicalReceived <= 0) continue;
+
+      statements.push(
+        env.DB.prepare(`
+          INSERT INTO purchase_receipt_items (receipt_id, order_item_id, product_id, quantity)
+          VALUES (?, ?, ?, ?)
+        `).bind(receiptId, entry.itemId, entry.productId, entry.physicalReceived),
+      );
+
+      if (entry.appliedToOrder > 0) {
+        statements.push(
+          env.DB.prepare(`
+            UPDATE purchase_order_items
+            SET received_quantity = received_quantity + ?
+            WHERE id = ?
+          `).bind(entry.appliedToOrder, entry.itemId),
+        );
+      }
+
+      if (entry.goodReceived > 0) {
+        statements.push(
+          env.DB.prepare("UPDATE products SET current_stock=current_stock+? WHERE id=?")
+            .bind(entry.goodReceived, entry.productId),
+        );
+        statements.push(
+          env.DB.prepare(`
+            INSERT INTO movements
+            (product_id, type, quantity, delta, reference, notes, performed_by, unit_amount, total_amount,
+              requested_quantity, pending_quantity, presentation, presentation_factor, performed_by_user_id,
+              business_date, source_type, source_id)
+            VALUES (?, 'entrada_compra', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pieza', 1, ?, ?, 'purchase_receipt', ?)
+          `).bind(
+            entry.productId,
+            entry.goodReceived,
+            entry.goodReceived,
+            order.folio,
+            `Recepción ${receiptId}. Pedido aplicado: ${entry.appliedToOrder}. Sobrante aceptado: ${entry.excessAccepted}. Dañado: ${entry.damaged}.`,
+            user.displayName,
+            entry.unitCost,
+            entry.unitCost * entry.goodReceived,
+            entry.physicalReceived,
+            entry.shortage,
+            user.id,
+            date,
+            receiptId,
+          ),
+        );
+      }
+
+      if (entry.damaged > 0) {
+        statements.push(
+          env.DB.prepare(`
+            INSERT INTO movements
+            (product_id, type, quantity, delta, reference, notes, performed_by, unit_amount, total_amount,
+              requested_quantity, pending_quantity, presentation, presentation_factor, performed_by_user_id,
+              business_date, source_type, source_id)
+            VALUES (?, 'defectuoso', ?, 0, ?, ?, ?, ?, ?, ?, 0, 'pieza', 1, ?, ?, 'purchase_receipt', ?)
+          `).bind(
+            entry.productId,
+            entry.damaged,
+            order.folio,
+            `Dañado en recepción ${receiptId}; no ingresó a inventario disponible. ${reason}`.trim(),
+            user.displayName,
+            entry.unitCost,
+            entry.unitCost * entry.damaged,
+            entry.damaged,
+            user.id,
+            date,
+            receiptId,
+          ),
+        );
+      }
+    }
+
+    if (statements.length) {
+      await env.DB.batch(statements);
+    }
+
+    const remaining = await env.DB.prepare(`
+      SELECT COUNT(*) AS total
+      FROM purchase_order_items
+      WHERE order_id=? AND received_quantity < ordered_quantity
+    `)
+      .bind(orderId)
+      .first<{ total: number }>();
+
+    const receivedStatus = Number(remaining?.total || 0) === 0 ? "completo" : "incompleto";
+    await env.DB.prepare(`
+      UPDATE purchase_orders
+      SET received_status=?, status=?, updated_at=CURRENT_TIMESTAMP
+      WHERE id=?
+    `)
+      .bind(receivedStatus, receivedStatus === "completo" ? "entregado" : "transito", orderId)
+      .run();
+
+    const summary = normalized.map((entry) => ({
+      itemId: entry.itemId,
+      productId: entry.productId,
+      code: entry.code,
+      productName: entry.productName,
+      ordered: entry.ordered,
+      pendingBefore: entry.pendingBefore,
+      physicalReceived: entry.physicalReceived,
+      damaged: entry.damaged,
+      goodReceived: entry.goodReceived,
+      appliedToOrder: entry.appliedToOrder,
+      excessAccepted: entry.excessAccepted,
+      shortage: entry.shortage,
+      pendingAfter: entry.pendingAfter,
+      previousStock: entry.previousStock,
+      newStock: entry.newStock,
+    }));
+
+    await recordAudit({
+      entityType: "purchase_order",
+      entityId: orderId,
+      action: "recepcion_avanzada",
+      user,
+      after: { receiptId, receivedStatus, items: summary },
+      reason,
+    });
+
+    await recordAudit({
+      entityType: "purchase_receipt",
+      entityId: receiptId,
+      action: "crear",
+      user,
+      after: { orderId, folio: order.folio, receivedStatus, items: summary },
+      reason,
+    });
+
+    return Response.json({
+      ok: true,
+      receiptId,
+      receivedStatus,
+      items: summary,
+    }, { status: 201 });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
