@@ -206,8 +206,88 @@ function Invoices({ data, clients, permissions, post, reload, onError }: { data:
   );
 }
 
+const auditFieldLabels: Record<string, string> = {
+  type: "Tipo de movimiento",
+  requestedQuantity: "Cantidad solicitada",
+  fulfilledQuantity: "Cantidad realizada",
+  pendingQuantity: "Cantidad pendiente",
+  presentation: "Presentación",
+  presentationFactor: "Factor de presentación",
+  previousStock: "Existencia anterior",
+  newStock: "Existencia nueva",
+  unitAmount: "Precio / costo unitario",
+  totalAmount: "Monto total",
+  name: "Nombre",
+  businessName: "Razón social",
+  taxId: "RFC",
+  phone: "Teléfono",
+  email: "Correo",
+  folio: "Folio",
+  paymentMethod: "Método de pago",
+  creditDays: "Días de crédito",
+  dueDate: "Fecha de vencimiento",
+  issueDate: "Fecha de emisión",
+  status: "Estatus",
+  receivedStatus: "Estado de recepción",
+  trackingNumber: "Número de guía",
+  expectedAt: "Fecha esperada",
+  amount: "Importe",
+  reference: "Referencia",
+  paidAt: "Fecha de pago",
+  subtotal: "Subtotal",
+  taxAmount: "Impuestos",
+  paidAmount: "Importe pagado",
+  businessDate: "Fecha operativa",
+};
+const auditMoneyFields = new Set(["unitAmount", "totalAmount", "amount", "subtotal", "taxAmount", "paidAmount"]);
+const movementTypeLabels: Record<string, string> = {
+  inventario_inicial: "Inventario inicial",
+  entrada_compra: "Entrada por compra",
+  venta: "Venta",
+  defectuoso: "Producto defectuoso",
+  devolucion_cliente: "Devolución de cliente",
+  devolucion_proveedor: "Devolución a proveedor",
+  ajuste_positivo: "Ajuste positivo",
+  ajuste_negativo: "Ajuste negativo",
+};
+const auditActionLabels: Record<string, string> = { crear: "Creación", modificar: "Modificación", anular: "Anulación", cancelar: "Cancelación", recibir: "Recepción", pago: "Pago" };
+const auditEntityLabels: Record<string, string> = { movement: "Movimiento", supplier: "Proveedor", order: "Pedido", invoice: "Factura", payment: "Pago", closure: "Corte diario" };
+
+function auditStamp(value: string) {
+  const parsed = new Date(value.replace(" ", "T") + "Z");
+  return {
+    date: new Intl.DateTimeFormat("es-MX", { dateStyle: "long" }).format(parsed),
+    time: new Intl.DateTimeFormat("es-MX", { timeStyle: "short" }).format(parsed),
+  };
+}
+function auditValue(key: string, value: unknown) {
+  if (auditMoneyFields.has(key) && Number.isFinite(Number(value))) return money.format(Number(value));
+  if (key === "type") return movementTypeLabels[String(value)] ?? String(value);
+  if (key === "presentation") return ({ pieza: "Pieza", unidad: "Unidad", ciento: "Ciento", juego: "Juego", caja: "Caja" } as Record<string, string>)[String(value)] ?? String(value);
+  if (["dueDate", "issueDate", "expectedAt", "paidAt", "businessDate"].includes(key) && typeof value === "string" && value) return dateOnly(value.slice(0, 10));
+  if (typeof value === "boolean") return value ? "Sí" : "No";
+  return String(value);
+}
+function auditDetails(value: string) {
+  try {
+    const parsed = JSON.parse(value || "{}") as Record<string, unknown>;
+    return Object.entries(auditFieldLabels)
+      .filter(([key]) => parsed[key] !== undefined && parsed[key] !== null && parsed[key] !== "")
+      .map(([key, label]) => ({ label, value: auditValue(key, parsed[key]) }));
+  } catch {
+    return [];
+  }
+}
+
 function AuditPanel({ rows }: { rows: Audit[] }) {
-  return <section className="card fill"><div className="card-head"><div><h2>Auditoría</h2><p>Bitácora inmutable de usuarios, fechas, cambios y anulaciones.</p></div></div><div className="audit-list">{rows.map(row => <details key={row.id}><summary><Pill value={row.action} tone={row.action.includes("anul") || row.action.includes("cancel") ? "red" : "blue"} /><span><strong>{row.entityType} #{row.entityId}</strong><small>{row.displayName} · {dateTime(row.createdAt)}</small></span></summary><div><p><b>Motivo:</b> {row.reason || "Sin motivo adicional"}</p><div className="audit-json"><pre>{prettyJson(row.beforeJson)}</pre><pre>{prettyJson(row.afterJson)}</pre></div></div></details>)}{!rows.length && <Empty text="Todavía no hay eventos de auditoría." />}</div></section>;
+  return <section className="card fill"><div className="card-head"><div><h2>Auditoría</h2><p>Bitácora inmutable de usuarios, fechas, cambios y anulaciones.</p></div></div><div className="audit-list">{rows.map(row => {
+    const stamp = auditStamp(row.createdAt);
+    const before = auditDetails(row.beforeJson);
+    const after = auditDetails(row.afterJson);
+    const entity = auditEntityLabels[row.entityType] ?? row.entityType;
+    const action = auditActionLabels[row.action] ?? row.action;
+    return <details key={row.id} open><summary><Pill value={action} tone={row.action.includes("anul") || row.action.includes("cancel") ? "red" : "blue"} /><span><strong>{entity} #{row.entityId}</strong><small>{row.displayName} · @{row.username}</small></span></summary><div><p><b>Usuario:</b> {row.displayName}</p><p><b>Cuenta:</b> @{row.username}</p><p><b>Fecha:</b> {stamp.date}</p><p><b>Hora:</b> {stamp.time}</p><p><b>Acción:</b> {action}</p><p><b>Motivo:</b> {row.reason || "Sin motivo adicional"}</p>{before.length > 0 && <div><h4>Datos anteriores</h4><ul>{before.map(item => <li key={`before-${item.label}`}><b>{item.label}:</b> {item.value}</li>)}</ul></div>}{after.length > 0 && <div><h4>{before.length ? "Datos posteriores" : "Datos del movimiento"}</h4><ul>{after.map(item => <li key={`after-${item.label}`}><b>{item.label}:</b> {item.value}</li>)}</ul></div>}</div></details>;
+  })}{!rows.length && <Empty text="Todavía no hay eventos de auditoría." />}</div></section>;
 }
 
 function Closures({ data, post }: { data: OperationsData; post: (action: string, payload: Record<string, unknown>) => Promise<boolean> }) {
@@ -240,4 +320,3 @@ function Check({ label, name, defaultChecked = false }: { label: string; name: s
 function Pill({ value, tone }: { value: string; tone: string }) { return <span className={`pill ${tone}`}>{value}</span>; }
 function Stat({ label, value, note }: { label: string; value: string; note: string }) { return <article className="stat blue"><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
 function Empty({ text }: { text: string }) { return <div className="empty"><span>✓</span><p>{text}</p></div>; }
-function prettyJson(value: string) { try { return JSON.stringify(JSON.parse(value || "{}"), null, 2); } catch { return value; } }
