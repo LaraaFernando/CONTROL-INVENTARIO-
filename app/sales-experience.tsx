@@ -15,9 +15,17 @@ type Product = {
 };
 
 type Client = { id: number; name: string };
+type Movement = {
+  id: number;
+  type: string;
+  productId: number;
+  voided: number;
+  createdAt: string;
+};
 type SalesData = {
   products: Product[];
   clients: Client[];
+  movements: Movement[];
   auth?: { permissions?: Record<string, boolean> };
 };
 
@@ -67,6 +75,7 @@ export default function SalesExperience() {
     {open && data && <SaleModal
       products={data.products}
       clients={data.clients}
+      movements={data.movements ?? []}
       close={() => setOpen(false)}
       onUnauthorized={() => window.location.reload()}
       onSaved={async message => {
