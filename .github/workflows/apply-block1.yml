@@ -1,0 +1,36 @@
+name: Aplicar Bloque 1 de CIV
+
+on:
+  push:
+    branches: [codex/bloque-1-simplificar-civ-final]
+    paths:
+      - ".github/workflows/apply-block1.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar rama
+        uses: actions/checkout@v4
+        with:
+          ref: codex/bloque-1-simplificar-civ-final
+          fetch-depth: 0
+
+      - name: Aplicar cambios del Bloque 1
+        run: python scripts/apply-block1.py
+
+      - name: Revisar diferencias
+        run: git diff --check
+
+      - name: Guardar cambios y retirar archivos temporales
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm scripts/apply-block1.py .github/workflows/apply-block1.yml
+          git add app/inventory-app.tsx app/sales-experience.tsx app/globals.css public/release.json
+          git commit -m "Simplificar CIV con el Bloque 1 de operación"
+          git push origin HEAD:codex/bloque-1-simplificar-civ-final
