@@ -175,14 +175,21 @@ export default function BlockOneExperience() {
   }, []);
 
   useEffect(() => {
-    normalizeInterface();
+    const initialTimer = window.setTimeout(() => normalizeInterface(), 0);
     const observer = new MutationObserver(() => normalizeInterface());
     observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    return () => {
+      window.clearTimeout(initialTimer);
+      observer.disconnect();
+    };
   }, [normalizeInterface]);
 
   useEffect(() => {
-    if (title === "Inicio") void loadHomeData();
+    if (title !== "Inicio") return;
+    const refreshTimer = window.setTimeout(() => {
+      void loadHomeData();
+    }, 0);
+    return () => window.clearTimeout(refreshTimer);
   }, [title, loadHomeData]);
 
   useEffect(() => {
