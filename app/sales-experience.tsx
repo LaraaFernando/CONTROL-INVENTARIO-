@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SaleModal } from "./sale-modal";
 
 type Product = {
@@ -26,7 +26,7 @@ export default function SalesExperience() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
 
-  async function openSale() {
+  const openSale = useCallback(async () => {
     setLoading(true);
     setLoadError("");
     try {
@@ -41,7 +41,7 @@ export default function SalesExperience() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     function captureSaleButton(event: MouseEvent) {
@@ -58,7 +58,7 @@ export default function SalesExperience() {
     }
     document.addEventListener("click", captureSaleButton, true);
     return () => document.removeEventListener("click", captureSaleButton, true);
-  }, []);
+  }, [openSale]);
 
   return <>
     {loading && <div className="update-banner"><span><strong>Preparando venta…</strong><small>Cargando productos y existencias actuales.</small></span></div>}
