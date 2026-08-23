@@ -55,7 +55,7 @@ export default function ProductCommercialExperience() {
     const heading = document.querySelector(".content h1")?.textContent?.trim();
     if (heading !== "Inventario") return;
     const table = document.querySelector<HTMLTableElement>(".content .card.fill table");
-    if (!table) return;
+    if (!table || table.dataset.civCommercialNormalized === "1") return;
     const headers = Array.from(table.querySelectorAll("thead th"));
     const presentationIndex = headers.findIndex((cell) => cell.textContent?.trim() === "Presentaciones" || cell.textContent?.trim() === "Forma de venta");
     const stockIndex = headers.findIndex((cell) => cell.textContent?.trim() === "Existencia");
@@ -97,17 +97,26 @@ export default function ProductCommercialExperience() {
         if (strong && suggested > 0) strong.textContent = `${suggested} ${unitLabel(baseUnit, suggested !== 1)}`;
       }
     });
+
+    table.dataset.civCommercialNormalized = "1";
   }, []);
 
   useEffect(() => {
     let active = true;
+    let source: Data | null = null;
     const timer = window.setTimeout(() => {
-      void load().then((json) => { if (active) normalizeInventory(json); }).catch(() => undefined);
+      void load().then((json) => {
+        if (!active) return;
+        source = json;
+        normalizeInventory(json);
+      }).catch(() => undefined);
     }, 0);
-    const observer = new MutationObserver(() => normalizeInventory(data));
+    const observer = new MutationObserver(() => {
+      if (source) normalizeInventory(source);
+    });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => { active = false; window.clearTimeout(timer); observer.disconnect(); };
-  }, [load, normalizeInventory, data]);
+  }, [load, normalizeInventory]);
 
   useEffect(() => {
     function capture(event: MouseEvent) {
