@@ -7,9 +7,9 @@ type Product = {
   id: number;
   sku: string;
   name: string;
+  unit: string;
   salePrice: number;
   currentStock: number;
-  setFactor: number;
   boxFactor: number;
 };
 
@@ -51,7 +51,7 @@ export default function SalesExperience() {
       const title = document.querySelector(".content h1")?.textContent?.trim();
       if (title !== "Ventas") return;
       const label = button.textContent?.replace(/\s+/g, " ").trim() || "";
-      if (!label.includes("Nuevo registro") && !label.includes("Registrar movimiento / venta")) return;
+      if (!label.includes("Nuevo registro") && !label.includes("Registrar movimiento / venta") && !label.includes("Nueva venta")) return;
       event.preventDefault();
       event.stopPropagation();
       void openSale();
