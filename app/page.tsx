@@ -1,3 +1,4 @@
+import AdvancedReceivingExperience from "./advanced-receiving-experience";
 import BlockOneExperience from "./block-one-experience";
 import BlockOneNavigationFix from "./block-one-navigation-fix";
 import BlockTwoExperience from "./block-two-experience";
@@ -7,5 +8,5 @@ import SalesExperience from "./sales-experience";
 export const dynamic = "force-dynamic";
 
 export default function Home() {
-  return <><InventoryApp /><SalesExperience /><BlockOneExperience /><BlockOneNavigationFix /><BlockTwoExperience /></>;
+  return <><InventoryApp /><SalesExperience /><BlockOneExperience /><BlockOneNavigationFix /><BlockTwoExperience /><AdvancedReceivingExperience /></>;
 }
