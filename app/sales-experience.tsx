@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SaleModal } from "./sale-modal";
 
 type Product = {
@@ -34,20 +34,38 @@ export default function SalesExperience() {
   const [data, setData] = useState<SalesData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const openingRef = useRef(false);
 
   const openSale = useCallback(async () => {
+    if (openingRef.current) return;
+    openingRef.current = true;
     setLoading(true);
     setLoadError("");
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+
     try {
-      const response = await fetch("/api/data", { cache: "no-store" });
+      const response = await fetch("/api/sales-context", {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const json = await response.json() as SalesData & { error?: string };
       if (!response.ok) throw new Error(json.error || "No se pudieron cargar los productos.");
-      if (!json.auth?.permissions?.["movements.sale"]) return;
+      if (!json.auth?.permissions?.["movements.sale"]) {
+        throw new Error("Tu usuario no tiene permiso para registrar ventas.");
+      }
       setData(json);
       setOpen(true);
     } catch (reason) {
-      setLoadError(reason instanceof Error ? reason.message : "No se pudo preparar la venta.");
+      if (reason instanceof DOMException && reason.name === "AbortError") {
+        setLoadError("La carga de productos tardó demasiado. Intenta abrir la venta otra vez.");
+      } else {
+        setLoadError(reason instanceof Error ? reason.message : "No se pudo preparar la venta.");
+      }
     } finally {
+      window.clearTimeout(timeout);
+      openingRef.current = false;
       setLoading(false);
     }
   }, []);
