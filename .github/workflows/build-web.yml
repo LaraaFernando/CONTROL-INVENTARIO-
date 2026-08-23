@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: verificar-web-${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +42,7 @@ jobs:
         run: npm test
 
       - name: Verificar versión publicada en Cloudflare
+        id: production_check
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           PROD_URL: https://control-inventario.laraafernando.workers.dev
@@ -53,6 +55,7 @@ jobs:
             if [ "$actual" = "$expected" ]; then
               curl -fsS --connect-timeout 10 --max-time 20 "$PROD_URL/" >/dev/null
               echo "Producción verificada: $PROD_URL"
+              echo "Release confirmado: $actual"
               exit 0
             fi
             echo "Intento $attempt/30: la versión productiva todavía no coincide."
@@ -60,3 +63,26 @@ jobs:
           done
           echo "::error::Cloudflare no publicó la versión esperada de public/release.json dentro del tiempo de espera."
           exit 1
+
+      - name: Publicar estado de producción en el commit
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_OUTCOME: ${{ steps.production_check.outcome }}
+          PROD_URL: https://control-inventario.laraafernando.workers.dev
+        run: |
+          set -euo pipefail
+          if [ "$CHECK_OUTCOME" = "success" ]; then
+            state="success"
+            description="Cloudflare sirve la release integrada en main"
+          else
+            state="failure"
+            description="Cloudflare todavía no sirve la release integrada"
+          fi
+          payload="$(node -e 'const [state,description,target_url]=process.argv.slice(1); process.stdout.write(JSON.stringify({state,context:"cloudflare-production",description,target_url}))' "$state" "$description" "$PROD_URL")"
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d "$payload" >/dev/null
