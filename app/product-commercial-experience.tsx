@@ -101,10 +101,12 @@ export default function ProductCommercialExperience() {
 
   useEffect(() => {
     let active = true;
-    void load().then((json) => { if (active) normalizeInventory(json); }).catch(() => undefined);
+    const timer = window.setTimeout(() => {
+      void load().then((json) => { if (active) normalizeInventory(json); }).catch(() => undefined);
+    }, 0);
     const observer = new MutationObserver(() => normalizeInventory(data));
     observer.observe(document.body, { childList: true, subtree: true });
-    return () => { active = false; observer.disconnect(); };
+    return () => { active = false; window.clearTimeout(timer); observer.disconnect(); };
   }, [load, normalizeInventory, data]);
 
   useEffect(() => {
