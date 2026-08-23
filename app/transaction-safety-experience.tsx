@@ -10,9 +10,9 @@ function labelByText(modal: Element, text: string) {
 function setRequired(label: HTMLLabelElement | null, required: boolean, title: string) {
   if (!label) return;
   const span = label.querySelector("span");
-  if (span) span.textContent = title;
+  if (span && span.textContent !== title) span.textContent = title;
   const field = label.querySelector<HTMLInputElement | HTMLSelectElement>("input, select");
-  if (field) field.required = required;
+  if (field && field.required !== required) field.required = required;
 }
 
 function configureSale(modal: HTMLElement) {
@@ -24,9 +24,11 @@ function configureSale(modal: HTMLElement) {
   const referenceLabel = labelByText(modal, "Folio o referencia") ?? labelByText(modal, "Referencia adicional (opcional)");
   if (referenceLabel) {
     const span = referenceLabel.querySelector("span");
-    if (span) span.textContent = "Referencia adicional (opcional)";
+    const title = "Referencia adicional (opcional)";
+    if (span && span.textContent !== title) span.textContent = title;
     const input = referenceLabel.querySelector<HTMLInputElement>("input");
-    if (input) input.placeholder = "Pedido, cotización u otra referencia externa";
+    const placeholder = "Pedido, cotización u otra referencia externa";
+    if (input && input.placeholder !== placeholder) input.placeholder = placeholder;
 
     if (!modal.querySelector("[data-civ-sale-folio-note]")) {
       const note = document.createElement("div");
@@ -83,11 +85,18 @@ function configureMovement(modal: HTMLElement) {
 
 export default function TransactionSafetyExperience() {
   useEffect(() => {
+    let syncing = false;
     const sync = () => {
-      document.querySelectorAll<HTMLElement>(".modal").forEach((modal) => {
-        configureSale(modal);
-        configureMovement(modal);
-      });
+      if (syncing) return;
+      syncing = true;
+      try {
+        document.querySelectorAll<HTMLElement>(".modal").forEach((modal) => {
+          configureSale(modal);
+          configureMovement(modal);
+        });
+      } finally {
+        syncing = false;
+      }
     };
 
     const timer = window.setTimeout(sync, 0);
