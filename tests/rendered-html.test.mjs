@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
 import { register } from "node:module";
 import test from "node:test";
 
@@ -32,5 +33,42 @@ test("renders development preview metadata", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, developmentPreviewMeta);
+  assert.match(
+    html,
+    /https:\/\/control-inventario\.laraafernando\.workers\.dev\//,
+  );
+});
+
+test("builds the larger mobile navigation and appearance settings", async () => {
+  const assetsUrl = new URL("../dist/client/assets/", import.meta.url);
+  const assetNames = await readdir(assetsUrl);
+  const css = (
+    await Promise.all(
+      assetNames
+        .filter((name) => name.endsWith(".css"))
+        .map((name) => readFile(new URL(name, assetsUrl), "utf8")),
+    )
+  ).join("\n");
+  const scripts = (
+    await Promise.all(
+      assetNames
+        .filter((name) => name.startsWith("inventory-app-") && name.endsWith(".js"))
+        .map((name) => readFile(new URL(name, assetsUrl), "utf8")),
+    )
+  ).join("\n");
+
+  assert.match(css, /height:calc\(76px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(css, /min-height:64px/);
+  assert.match(css, /html\[data-theme=dark\]/);
+  assert.match(scripts, /Ajustes/);
+  assert.match(scripts, /Modo claro/);
+  assert.match(scripts, /Modo oscuro/);
+
+  const serviceWorker = await readFile(
+    new URL("../dist/client/sw.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(serviceWorker, /civ-shell-v2/);
 });
