@@ -237,6 +237,7 @@ export default function BlockOneExperience() {
     permissions["movements.adjust"],
   );
   const canAdmin = Boolean(
+    permissions["audit.view"] ||
     permissions["invoices.manage"] ||
     permissions["invoices.files"] ||
     permissions["closures.manage"] ||
@@ -315,12 +316,12 @@ export default function BlockOneExperience() {
     {desktopNavigation}
     {moreOpen && (
       <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) { setMoreOpen(false); setMenuView("more"); } }}>
-        <section className={styles.sheet} role="dialog" aria-modal="true" aria-label={menuView === "more" ? "Más opciones" : "Administración"}>
+        <section className={styles.sheet} role="dialog" aria-modal="true" aria-label={menuView === "more" ? "Más opciones" : "Administración avanzada"}>
           <div className={styles.handle} />
           <header className={styles.sheetHead}>
             <div>
-              <strong>{menuView === "more" ? "Más" : "Administración"}</strong>
-              <small>{menuView === "more" ? "Funciones adicionales de CIV" : "Funciones administrativas separadas de la operación diaria"}</small>
+              <strong>{menuView === "more" ? "Más" : "Administración avanzada"}</strong>
+              <small>{menuView === "more" ? "Clientes, compras y ajustes de CIV" : "Herramientas que no necesitas para la operación diaria"}</small>
             </div>
             <button onClick={() => { if (menuView === "administration") setMenuView("more"); else setMoreOpen(false); }} aria-label={menuView === "administration" ? "Volver" : "Cerrar"}>{menuView === "administration" ? "←" : "×"}</button>
           </header>
@@ -330,12 +331,12 @@ export default function BlockOneExperience() {
               <button onClick={() => navigate("Clientes")}><span>♙</span><strong>Clientes</strong><small>Directorio y datos comerciales</small></button>
               {permissions["suppliers.manage"] && <button onClick={() => navigate("Proveedores")}><span>♧</span><strong>Proveedores</strong><small>Compras y condiciones comerciales</small></button>}
               {permissions["orders.manage"] && <button onClick={() => navigate("Pedidos")}><span>▣</span><strong>Pedidos</strong><small>Seguimiento y recepción</small></button>}
-              {permissions["audit.view"] && <button onClick={() => navigate("Auditoría")}><span>◎</span><strong>Auditoría</strong><small>Quién hizo qué, cuándo y por qué</small></button>}
-              {canAdmin && <button onClick={() => setMenuView("administration")}><span>▤</span><strong>Administración</strong><small>Facturación, pagos, notas y controles</small></button>}
+              {canAdmin && <button onClick={() => setMenuView("administration")}><span>▤</span><strong>Administración avanzada</strong><small>Auditoría, facturación y controles</small></button>}
               <button onClick={openSettings}><span>⚙</span><strong>Ajustes</strong><small>Apariencia y comodidad</small></button>
             </div>
           ) : (
             <div className={styles.menuGrid}>
+              {permissions["audit.view"] && <button onClick={() => navigate("Auditoría")}><span>◎</span><strong>Auditoría</strong><small>Quién hizo qué, cuándo y por qué</small></button>}
               {(permissions["invoices.manage"] || permissions["invoices.files"]) && <button onClick={() => navigate("Facturación")}><span>▤</span><strong>Facturación y pagos</strong><small>XML/PDF, PUE/PPD y seguimiento</small></button>}
               {(permissions["credit_notes.create"] || permissions["credit_notes.status"] || permissions["credit_notes.delete"]) && <button onClick={() => navigate("Notas de crédito")}><span>↩</span><strong>Notas de crédito</strong><small>Control administrativo de notas</small></button>}
               {permissions["closures.manage"] && <button onClick={() => navigate("Corte diario")}><span>✓</span><strong>Corte diario</strong><small>Resumen financiero de la operación</small></button>}
