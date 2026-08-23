@@ -15,6 +15,7 @@ type Product = {
 };
 
 type Client = { id: number; name: string };
+type Movement = { id: number; type: string; productId: number; voided: number };
 type SaleLine = { key: number; productId: string; presentation: string; quantity: string };
 type SaleResult = { ok: boolean; reference: string; lineCount: number; totalAmount: number; warning?: string };
 
@@ -41,9 +42,10 @@ function matches(product: Product, query: string) {
     || normalized(product.category || "").includes(raw);
 }
 
-export function SaleModal({ products, clients, close, onSaved, onUnauthorized }: {
+export function SaleModal({ products, clients, movements, close, onSaved, onUnauthorized }: {
   products: Product[];
   clients: Client[];
+  movements: Movement[];
   close: () => void;
   onSaved: (message: string) => Promise<void> | void;
   onUnauthorized: () => void;
@@ -61,6 +63,38 @@ export function SaleModal({ products, clients, close, onSaved, onUnauthorized }:
     () => productSearch.trim() ? products.filter((product) => matches(product, productSearch)).slice(0, 10) : [],
     [productSearch, products],
   );
+
+  const frequentProducts = useMemo(() => {
+    const stats = new Map<number, { count: number; lastMovementId: number }>();
+    movements.forEach((movement) => {
+      if (movement.type !== "venta" || movement.voided) return;
+      const current = stats.get(movement.productId) ?? { count: 0, lastMovementId: 0 };
+      stats.set(movement.productId, {
+        count: current.count + 1,
+        lastMovementId: Math.max(current.lastMovementId, movement.id),
+      });
+    });
+    return Array.from(stats.entries())
+      .sort((left, right) => right[1].count - left[1].count || right[1].lastMovementId - left[1].lastMovementId)
+      .map(([productId, stat]) => ({ product: products.find((product) => product.id === productId), count: stat.count }))
+      .filter((entry): entry is { product: Product; count: number } => Boolean(entry.product))
+      .slice(0, 6);
+  }, [movements, products]);
+
+  const recentProducts = useMemo(() => {
+    const seen = new Set<number>();
+    const result: Product[] = [];
+    [...movements]
+      .sort((left, right) => right.id - left.id)
+      .forEach((movement) => {
+        if (result.length >= 6 || movement.type !== "venta" || movement.voided || seen.has(movement.productId)) return;
+        const product = products.find((candidate) => candidate.id === movement.productId);
+        if (!product) return;
+        seen.add(movement.productId);
+        result.push(product);
+      });
+    return result;
+  }, [movements, products]);
 
   const previews = useMemo(() => {
     const remaining = new Map(products.map(product => [product.id, product.currentStock]));
@@ -135,6 +169,47 @@ export function SaleModal({ products, clients, close, onSaved, onUnauthorized }:
           <label><span>Folio o referencia</span><input value={reference} onChange={event => setReference(event.target.value)} placeholder="Se genera automáticamente si lo dejas vacío" /></label>
           <label className="wide"><span>Observaciones</span><input value={notes} onChange={event => setNotes(event.target.value)} /></label>
         </div>
+
+        {(frequentProducts.length > 0 || recentProducts.length > 0) && <div className="card" style={{ padding: 16, marginTop: 20 }}>
+          <div style={{ marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>Accesos rápidos</h3>
+            <small style={{ color: "var(--muted)" }}>Agrega con un toque lo que vendes seguido o acabas de usar.</small>
+          </div>
+          {frequentProducts.length > 0 && <div style={{ marginBottom: recentProducts.length ? 16 : 0 }}>
+            <strong style={{ display: "block", marginBottom: 8 }}>Frecuentes</strong>
+            <div style={{ display: "flex", gap: 9, overflowX: "auto", paddingBottom: 4 }}>
+              {frequentProducts.map(({ product, count }) => <button
+                key={`frequent-${product.id}`}
+                type="button"
+                disabled={product.currentStock <= 0}
+                onClick={() => addProduct(product)}
+                style={{ flex: "0 0 210px", padding: 12, border: "1px solid var(--line)", borderRadius: 14, background: "var(--card)", color: "var(--text)", textAlign: "left", opacity: product.currentStock > 0 ? 1 : .55, cursor: product.currentStock > 0 ? "pointer" : "not-allowed" }}
+              >
+                <code style={{ fontWeight: 800 }}>{product.sku}</code>
+                <strong style={{ display: "block", marginTop: 4 }}>{product.name}</strong>
+                <small style={{ display: "block", marginTop: 5, color: "var(--muted)" }}>{count} venta{count === 1 ? "" : "s"} reciente{count === 1 ? "" : "s"} · stock {product.currentStock}</small>
+                <span style={{ display: "block", marginTop: 7, fontWeight: 800 }}>{product.currentStock > 0 ? "＋ Agregar" : "Agotado"}</span>
+              </button>)}
+            </div>
+          </div>}
+          {recentProducts.length > 0 && <div>
+            <strong style={{ display: "block", marginBottom: 8 }}>Recientes</strong>
+            <div style={{ display: "flex", gap: 9, overflowX: "auto", paddingBottom: 4 }}>
+              {recentProducts.map((product) => <button
+                key={`recent-${product.id}`}
+                type="button"
+                disabled={product.currentStock <= 0}
+                onClick={() => addProduct(product)}
+                style={{ flex: "0 0 210px", padding: 12, border: "1px solid var(--line)", borderRadius: 14, background: "var(--card)", color: "var(--text)", textAlign: "left", opacity: product.currentStock > 0 ? 1 : .55, cursor: product.currentStock > 0 ? "pointer" : "not-allowed" }}
+              >
+                <code style={{ fontWeight: 800 }}>{product.sku}</code>
+                <strong style={{ display: "block", marginTop: 4 }}>{product.name}</strong>
+                <small style={{ display: "block", marginTop: 5, color: "var(--muted)" }}>{product.category || "Sin categoría"} · stock {product.currentStock}</small>
+                <span style={{ display: "block", marginTop: 7, fontWeight: 800 }}>{product.currentStock > 0 ? "＋ Agregar" : "Agotado"}</span>
+              </button>)}
+            </div>
+          </div>}
+        </div>}
 
         <div className="card" style={{ padding: 16, marginTop: 20, overflow: "visible" }}>
           <div style={{ marginBottom: 10 }}>
