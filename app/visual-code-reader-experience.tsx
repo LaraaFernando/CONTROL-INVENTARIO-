@@ -92,7 +92,7 @@ function findMatches(products: Product[], text: string) {
 
   if (exact.length) return exact.slice(0, 6);
 
-  const approximate = products
+  return products
     .map((product) => {
       const code = normalizeCode(product.sku);
       const distance = candidates
@@ -104,8 +104,6 @@ function findMatches(products: Product[], text: string) {
     .sort((left, right) => left.distance - right.distance)
     .slice(0, 5)
     .map(({ product }) => ({ product, exact: false } satisfies Match));
-
-  return approximate;
 }
 
 function loadTesseract() {
@@ -120,6 +118,10 @@ function loadTesseract() {
     };
 
     if (existing) {
+      if (window.Tesseract) {
+        resolve(window.Tesseract);
+        return;
+      }
       existing.addEventListener("load", finish, { once: true });
       existing.addEventListener("error", () => reject(new Error("No se pudo cargar el lector visual.")), { once: true });
       return;
@@ -130,7 +132,10 @@ function loadTesseract() {
     script.async = true;
     script.crossOrigin = "anonymous";
     script.addEventListener("load", finish, { once: true });
-    script.addEventListener("error", () => reject(new Error("No se pudo cargar el lector visual.")), { once: true });
+    script.addEventListener("error", () => {
+      script.remove();
+      reject(new Error("No se pudo cargar el lector visual."));
+    }, { once: true });
     document.head.appendChild(script);
   }).catch((error) => {
     tesseractPromise = null;
@@ -317,12 +322,13 @@ export default function VisualCodeReaderExperience() {
     setOcrText("");
 
     try {
-      if (!products.length) {
+      let availableProducts = products;
+      if (!availableProducts.length) {
         const response = await fetch("/api/data", { cache: "no-store" });
         const json = await response.json() as Data;
         if (!response.ok) throw new Error(json.error || "No se pudieron cargar los productos.");
-        setProducts(json.products ?? []);
-        products.splice(0, products.length, ...(json.products ?? []));
+        availableProducts = json.products ?? [];
+        setProducts(availableProducts);
       }
 
       const prepared = await prepareImage(file);
@@ -344,7 +350,7 @@ export default function VisualCodeReaderExperience() {
         const result = await worker.recognize(prepared);
         const text = result.data.text.trim();
         setOcrText(text);
-        const productMatches = findMatches(products, text);
+        const productMatches = findMatches(availableProducts, text);
         setMatches(productMatches);
         if (!productMatches.length) {
           setError("No encontré una coincidencia segura. Puedes corregir o escribir el código abajo.");
