@@ -10,6 +10,8 @@ type ProductRow = {
   unit: string;
   salePrice: number;
   currentStock: number;
+  reservedStock: number;
+  availableStock: number;
 };
 
 type ClientRow = { id: number; name: string; businessName: string; phone: string; address: string };
@@ -53,6 +55,26 @@ async function ensureFieldOrderSchema() {
       `),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_field_orders_status ON field_orders(status, id)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_field_order_items_order ON field_order_items(order_id, id)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_field_order_items_product ON field_order_items(product_id, order_id)"),
+      env.DB.prepare(`
+        CREATE TRIGGER IF NOT EXISTS trg_field_order_items_reservation_insert
+        BEFORE INSERT ON field_order_items
+        FOR EACH ROW
+        WHEN NEW.quantity > (
+          SELECT MAX(0, p.current_stock - COALESCE((
+            SELECT SUM(i.quantity)
+            FROM field_order_items i
+            INNER JOIN field_orders o ON o.id = i.order_id
+            WHERE i.product_id = NEW.product_id
+              AND o.status IN ('levantado', 'preparando')
+          ), 0))
+          FROM products p
+          WHERE p.id = NEW.product_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'stock_reservado_insuficiente');
+        END
+      `),
     ]).then(() => undefined).catch((error) => {
       schemaPromise = null;
       throw error;
@@ -67,7 +89,11 @@ function text(value: unknown) {
 
 function errorResponse(error: unknown) {
   if (error instanceof AuthError) return Response.json({ error: error.message }, { status: error.status });
-  return Response.json({ error: error instanceof Error ? error.message : "No se pudo procesar el pedido." }, { status: 500 });
+  const message = error instanceof Error ? error.message : "No se pudo procesar el pedido.";
+  if (message.includes("stock_reservado_insuficiente")) {
+    return Response.json({ error: "La disponibilidad cambió porque otro pedido apartó mercancía. Actualiza y vuelve a intentarlo." }, { status: 409 });
+  }
+  return Response.json({ error: message }, { status: 500 });
 }
 
 async function nextOrderFolio(date: string) {
@@ -83,6 +109,33 @@ async function nextOrderFolio(date: string) {
   return `PED-${date.replaceAll("-", "")}-${String(sequence).padStart(6, "0")}`;
 }
 
+const productAvailabilitySql = `
+  SELECT
+    p.id,
+    p.sku,
+    p.name,
+    p.category,
+    p.unit,
+    p.sale_price AS salePrice,
+    p.current_stock AS currentStock,
+    COALESCE((
+      SELECT SUM(i.quantity)
+      FROM field_order_items i
+      INNER JOIN field_orders o ON o.id = i.order_id
+      WHERE i.product_id = p.id
+        AND o.status IN ('levantado', 'preparando')
+    ), 0) AS reservedStock,
+    MAX(0, p.current_stock - COALESCE((
+      SELECT SUM(i.quantity)
+      FROM field_order_items i
+      INNER JOIN field_orders o ON o.id = i.order_id
+      WHERE i.product_id = p.id
+        AND o.status IN ('levantado', 'preparando')
+    ), 0)) AS availableStock
+  FROM products p
+  WHERE p.active = 1
+`;
+
 export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
@@ -90,10 +143,7 @@ export async function GET(request: Request) {
     await ensureFieldOrderSchema();
 
     const [productsResult, clientsResult, ordersResult] = await Promise.all([
-      env.DB.prepare(`
-        SELECT id, sku, name, category, unit, sale_price AS salePrice, current_stock AS currentStock
-        FROM products WHERE active = 1 ORDER BY name
-      `).all<ProductRow>(),
+      env.DB.prepare(`${productAvailabilitySql} ORDER BY p.name`).all<ProductRow>(),
       env.DB.prepare(`
         SELECT id, name, business_name AS businessName, phone, address
         FROM clients WHERE active = 1 ORDER BY name
@@ -111,7 +161,12 @@ export async function GET(request: Request) {
     ]);
 
     return Response.json({
-      products: productsResult.results ?? [],
+      products: (productsResult.results ?? []).map((row) => ({
+        ...row,
+        currentStock: Number(row.currentStock || 0),
+        reservedStock: Number(row.reservedStock || 0),
+        availableStock: Number(row.availableStock || 0),
+      })),
       clients: clientsResult.results ?? [],
       orders: ordersResult.results ?? [],
       canCreateOrder: Boolean(user.permissions["movements.sale"] || user.permissions["orders.manage"]),
@@ -165,24 +220,37 @@ export async function POST(request: Request) {
     const items = Array.isArray(body.items) ? body.items as OrderItemInput[] : [];
     if (!items.length) throw new AuthError("Agrega al menos un producto al pedido.", 400);
 
-    const productsResult = await env.DB.prepare(`
-      SELECT id, sku, name, category, unit, sale_price AS salePrice, current_stock AS currentStock
-      FROM products WHERE active = 1
-    `).all<ProductRow>();
-    const products = new Map((productsResult.results ?? []).map((row) => [Number(row.id), row]));
-    const lines: Array<{ productId: number; quantity: number; unitAmount: number; totalAmount: number; sku: string; name: string; currentStock: number }> = [];
-
+    const requestedByProduct = new Map<number, number>();
     for (const item of items) {
       const productId = Number(item.productId || 0);
       const quantity = Number(item.quantity || 0);
       if (!productId || !Number.isInteger(quantity) || quantity < 1) throw new AuthError("Revisa las cantidades del pedido.", 400);
+      requestedByProduct.set(productId, (requestedByProduct.get(productId) ?? 0) + quantity);
+    }
+
+    const productsResult = await env.DB.prepare(productAvailabilitySql).all<ProductRow>();
+    const products = new Map((productsResult.results ?? []).map((row) => [Number(row.id), row]));
+    const lines: Array<{ productId: number; quantity: number; unitAmount: number; totalAmount: number; sku: string; name: string; currentStock: number; reservedStock: number; availableStock: number }> = [];
+
+    for (const [productId, quantity] of requestedByProduct) {
       const product = products.get(productId);
       if (!product) throw new AuthError("Uno de los productos ya no está disponible.", 404);
-      if (quantity > Number(product.currentStock || 0)) {
-        throw new AuthError(`${product.sku} · ${product.name}: solo hay ${product.currentStock} disponibles.`, 409);
+      const availableStock = Number(product.availableStock || 0);
+      if (quantity > availableStock) {
+        throw new AuthError(`${product.sku} · ${product.name}: solo hay ${availableStock} disponibles; ${Number(product.reservedStock || 0)} ya están apartados.`, 409);
       }
       const unitAmount = Number(product.salePrice || 0);
-      lines.push({ productId, quantity, unitAmount, totalAmount: unitAmount * quantity, sku: product.sku, name: product.name, currentStock: Number(product.currentStock || 0) });
+      lines.push({
+        productId,
+        quantity,
+        unitAmount,
+        totalAmount: unitAmount * quantity,
+        sku: product.sku,
+        name: product.name,
+        currentStock: Number(product.currentStock || 0),
+        reservedStock: Number(product.reservedStock || 0),
+        availableStock,
+      });
     }
 
     const date = businessDate();

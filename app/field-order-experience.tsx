@@ -3,7 +3,17 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
-type Product = { id: number; sku: string; name: string; category: string; unit: string; salePrice: number; currentStock: number };
+type Product = {
+  id: number;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  salePrice: number;
+  currentStock: number;
+  reservedStock: number;
+  availableStock: number;
+};
 type Client = { id: number; name: string; businessName: string; phone: string; address: string };
 type Order = { id: number; folio: string; status: string; totalAmount: number; createdBy: string; businessDate: string; createdAt: string; clientName: string; lineCount: number };
 type Context = { products: Product[]; clients: Client[]; orders: Order[]; canCreateOrder: boolean; canCreateClient: boolean };
@@ -90,7 +100,7 @@ export default function FieldOrderExperience() {
   function add(product: Product) {
     setLines((current) => {
       const existing = current.find((line) => line.productId === product.id);
-      if (existing) return current.map((line) => line.productId === product.id ? { ...line, quantity: Math.min(product.currentStock, line.quantity + 1) } : line);
+      if (existing) return current.map((line) => line.productId === product.id ? { ...line, quantity: Math.min(product.availableStock, line.quantity + 1) } : line);
       return [...current, { productId: product.id, quantity: 1 }];
     });
     setSearch("");
@@ -120,10 +130,11 @@ export default function FieldOrderExperience() {
       const json = await response.json() as { folio?: string; totalAmount?: number; error?: string };
       if (!response.ok) throw new Error(json.error || "No se pudo enviar el pedido.");
       setOpen(false);
-      setNotice(`Pedido ${json.folio} enviado al almacén por ${money.format(Number(json.totalAmount || 0))}.`);
+      setNotice(`Pedido ${json.folio} enviado al almacén por ${money.format(Number(json.totalAmount || 0))}. La mercancía quedó apartada.`);
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo enviar el pedido.");
+      await load();
     } finally { setBusy(false); }
   }
 
@@ -156,14 +167,14 @@ export default function FieldOrderExperience() {
   return createPortal(<>
     <section style={{ margin: "0 0 18px", padding: 16, border: "1px solid var(--line)", borderRadius: 18, background: "var(--card)" }}>
       <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-        <div><strong style={{ display: "block", fontSize: 19 }}>Pedidos de campo</strong><small style={{ color: "var(--muted)" }}>Levanta el pedido aquí. El almacén lo recibe sin descontar todavía el inventario.</small></div>
+        <div><strong style={{ display: "block", fontSize: 19 }}>Pedidos de campo</strong><small style={{ color: "var(--muted)" }}>Al enviarlo, CIV aparta la mercancía para que otro vendedor ya no la ofrezca.</small></div>
         {context?.canCreateOrder && <button type="button" className="primary" onClick={startOrder}>＋ Levantar pedido</button>}
       </div>
       {notice && <div className="alert success" style={{ marginTop: 12 }}>{notice}</div>}
       {context?.orders?.length ? <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
         {context.orders.slice(0, 4).map((order) => <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 12, borderRadius: 12, background: "var(--soft)" }}>
           <span><code style={{ fontWeight: 800 }}>{order.folio}</code><strong style={{ display: "block" }}>{order.clientName}</strong><small style={{ color: "var(--muted)" }}>{order.lineCount} partida{Number(order.lineCount) === 1 ? "" : "s"} · {order.createdBy}</small></span>
-          <span style={{ textAlign: "right" }}><b>{money.format(Number(order.totalAmount || 0))}</b><small style={{ display: "block", color: "var(--muted)" }}>Pedido levantado</small></span>
+          <span style={{ textAlign: "right" }}><b>{money.format(Number(order.totalAmount || 0))}</b><small style={{ display: "block", color: "var(--muted)" }}>Pedido levantado · apartado</small></span>
         </div>)}
       </div> : null}
     </section>
@@ -180,18 +191,19 @@ export default function FieldOrderExperience() {
 
           <div className="card" style={{ padding: 14, marginTop: 16 }}>
             <strong>Agregar productos</strong>
+            <small style={{ display: "block", color: "var(--muted)", marginTop: 3 }}>“Disponible” ya descuenta lo apartado en otros pedidos.</small>
             <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Código, nombre o categoría" style={{ width: "100%", marginTop: 9 }} />
-            {search.trim() && <div style={{ display: "grid", gap: 7, marginTop: 9 }}>{results.map((product) => <button key={product.id} type="button" disabled={product.currentStock <= 0} onClick={() => add(product)} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 10, textAlign: "left", border: "1px solid var(--line)", borderRadius: 10, background: "var(--card)", color: "var(--text)" }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{product.currentStock} disponibles</small></span><b>{money.format(product.salePrice)}</b></button>)}</div>}
+            {search.trim() && <div style={{ display: "grid", gap: 7, marginTop: 9 }}>{results.map((product) => <button key={product.id} type="button" disabled={product.availableStock <= 0} onClick={() => add(product)} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 10, textAlign: "left", border: "1px solid var(--line)", borderRadius: 10, background: "var(--card)", color: "var(--text)", opacity: product.availableStock > 0 ? 1 : .55 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{product.availableStock} disponibles{product.reservedStock ? ` · ${product.reservedStock} apartados` : ""}</small></span><b>{money.format(product.salePrice)}</b></button>)}</div>}
           </div>
 
           <div style={{ display: "grid", gap: 9, marginTop: 16 }}>{lines.map((line) => {
             const product = context.products.find((row) => row.id === line.productId);
             if (!product) return null;
-            return <div key={line.productId} style={{ display: "grid", gridTemplateColumns: "1fr 110px 36px", gap: 8, alignItems: "center", padding: 11, border: "1px solid var(--line)", borderRadius: 12 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{money.format(product.salePrice)} c/u · {product.currentStock} disponibles</small></span><input type="number" min={1} max={product.currentStock} value={line.quantity} onChange={(event) => setLines((current) => current.map((row) => row.productId === line.productId ? { ...row, quantity: Math.max(1, Math.min(product.currentStock, Number(event.target.value) || 1)) } : row))} /><button type="button" className="mini danger" onClick={() => setLines((current) => current.filter((row) => row.productId !== line.productId))}>×</button></div>;
+            return <div key={line.productId} style={{ display: "grid", gridTemplateColumns: "1fr 110px 36px", gap: 8, alignItems: "center", padding: 11, border: "1px solid var(--line)", borderRadius: 12 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{money.format(product.salePrice)} c/u · {product.availableStock} disponibles · {product.reservedStock} apartados</small></span><input type="number" min={1} max={product.availableStock} value={line.quantity} onChange={(event) => setLines((current) => current.map((row) => row.productId === line.productId ? { ...row, quantity: Math.max(1, Math.min(product.availableStock, Number(event.target.value) || 1)) } : row))} /><button type="button" className="mini danger" onClick={() => setLines((current) => current.filter((row) => row.productId !== line.productId))}>×</button></div>;
           })}</div>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, fontSize: 18 }}><strong>Total</strong><strong>{money.format(total)}</strong></div>
-          <div className="modal-actions"><button type="button" className="secondary" onClick={() => setOpen(false)} disabled={busy}>Cancelar</button><button className="primary" disabled={busy || !lines.length}>{busy ? "Enviando…" : "Enviar pedido al almacén"}</button></div>
+          <div className="modal-actions"><button type="button" className="secondary" onClick={() => setOpen(false)} disabled={busy}>Cancelar</button><button className="primary" disabled={busy || !lines.length}>{busy ? "Enviando…" : "Enviar y apartar"}</button></div>
         </form>
       </div>
     </div>}
