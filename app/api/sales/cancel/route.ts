@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { assertBusinessDateOpen, ensureOperationalSchema, recordAudit } from "../../../../db/operations";
 import { AuthError, requirePermission, requireUser } from "../../../auth";
+import { ensureFieldOrderSchema } from "../../../field-order-schema";
 import { ensureSaleTrackingSchema } from "../../../sale-tracking";
 
 type TargetMovement = {
@@ -24,6 +25,8 @@ type RelatedMovement = {
   delta: number;
   currentStock: number;
 };
+
+type LinkedFieldOrder = { id: number; folio: string; status: string };
 
 function text(value: unknown) {
   return String(value ?? "").trim();
@@ -74,6 +77,7 @@ export async function POST(request: Request) {
     await ensureOperationalSchema();
     await ensureSaleTrackingSchema();
     await ensureCancellationSchema();
+    await ensureFieldOrderSchema();
 
     const body = await request.json() as Record<string, unknown>;
     const movementId = Number(body.movementId || 0);
@@ -105,6 +109,13 @@ export async function POST(request: Request) {
     const trackedSale = folio
       ? await env.DB.prepare("SELECT id, voided FROM sales WHERE folio = ? LIMIT 1")
           .bind(folio).first<{ id: number; voided: number }>()
+      : null;
+    const linkedFieldOrder = folio
+      ? await env.DB.prepare(`
+          SELECT id, folio, status FROM field_orders
+          WHERE sale_reference = ? AND status IN ('transito', 'entregado')
+          LIMIT 1
+        `).bind(folio).first<LinkedFieldOrder>()
       : null;
 
     if (trackedSale?.voided) throw new AuthError("Esa venta ya fue anulada.", 409);
@@ -220,6 +231,15 @@ export async function POST(request: Request) {
       `).bind(user.id, user.displayName, reason, trackedSale.id));
     }
 
+    if (linkedFieldOrder) {
+      statements.push(env.DB.prepare(`
+        UPDATE field_orders
+        SET status='cancelado', canceled_at=CURRENT_TIMESTAMP, canceled_reason=?,
+            updated_by_user_id=?, updated_by=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+      `).bind(`Venta anulada: ${reason}`, user.id, user.displayName, linkedFieldOrder.id));
+    }
+
     await env.DB.batch(statements);
 
     const restored: Array<{ productId: number; sku: string; productName: string; previousStock: number; newStock: number; correction: number }> = [];
@@ -250,6 +270,18 @@ export async function POST(request: Request) {
         user,
         before: { folio, voided: false },
         after: { folio, voided: true, restored },
+        reason,
+      });
+    }
+
+    if (linkedFieldOrder) {
+      await recordAudit({
+        entityType: "field_order",
+        entityId: linkedFieldOrder.id,
+        action: "cancelar_por_anulacion_venta",
+        user,
+        before: { folio: linkedFieldOrder.folio, status: linkedFieldOrder.status, saleReference: folio },
+        after: { folio: linkedFieldOrder.folio, status: "cancelado", restored },
         reason,
       });
     }
