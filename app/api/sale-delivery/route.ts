@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { ensureOperationalSchema, recordAudit } from "../../../db/operations";
 import { AuthError, requirePermission, requireUser } from "../../auth";
+import { ensureFieldOrderSchema } from "../../field-order-schema";
 import { ensureSaleTrackingSchema } from "../../sale-tracking";
 
 type DeliveryStatus = "preparando" | "transito" | "entregada";
@@ -181,6 +182,16 @@ export async function POST(request: Request) {
         updated_by = excluded.updated_by,
         updated_at = CURRENT_TIMESTAMP
     `).bind(reference, nextStatus, nextStatus, nextStatus, user.id, user.displayName).run();
+
+    if (nextStatus === "entregada") {
+      await ensureFieldOrderSchema();
+      await env.DB.prepare(`
+        UPDATE field_orders
+        SET status='entregado', delivered_at=COALESCE(delivered_at, CURRENT_TIMESTAMP),
+          updated_by_user_id=?, updated_by=?, updated_at=CURRENT_TIMESTAMP
+        WHERE sale_reference=? AND status='transito'
+      `).bind(user.id, user.displayName, reference).run();
+    }
 
     await recordAudit({
       entityType: "sale_delivery",
