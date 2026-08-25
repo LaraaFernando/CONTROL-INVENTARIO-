@@ -72,3 +72,22 @@ test("builds the larger mobile navigation and appearance settings", async () => 
   );
   assert.match(serviceWorker, /civ-shell-v2/);
 });
+
+test("builds classified movement navigation and canceled-sale drilldown", async () => {
+  const assetsUrl = new URL("../dist/client/assets/", import.meta.url);
+  const assetNames = await readdir(assetsUrl);
+  const scripts = (
+    await Promise.all(
+      assetNames
+        .filter((name) => name.endsWith(".js"))
+        .map((name) => readFile(new URL(name, assetsUrl), "utf8")),
+    )
+  ).join("\n");
+
+  assert.match(scripts, /Movimientos clasificados/);
+  assert.match(scripts, /Ventas anuladas/);
+  assert.match(scripts, /Venta completa anulada/);
+  assert.match(scripts, /Anulación parcial/);
+  assert.match(scripts, /Compras y entradas/);
+  assert.match(scripts, /\/api\/movement-history/);
+});
