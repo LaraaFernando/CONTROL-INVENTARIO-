@@ -200,8 +200,7 @@ export default function ProductCommercialExperience() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
+    const form = new FormData(event.currentTarget);
     const wasEditing = Boolean(editing);
     const sku = String(form.get("sku") ?? "").trim().toUpperCase();
     const name = String(form.get("name") ?? "").trim();
@@ -232,21 +231,10 @@ export default function ProductCommercialExperience() {
 
       setNotice(wasEditing
         ? `${sku} · ${name} actualizado correctamente.`
-        : `${sku} · ${name} registrado. Puedes capturar el siguiente producto.`);
+        : `${sku} · ${name} registrado correctamente.`);
       window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
+      setEditing(undefined);
       void load().catch(() => undefined);
-
-      if (wasEditing) {
-        setEditing(undefined);
-      } else {
-        formElement.reset();
-        setEditing(null);
-        setUnit("pieza");
-        setBoxEnabled(false);
-        setBoxFactor("0");
-        const firstInput = formElement.querySelector<HTMLInputElement>('input[name="sku"]');
-        window.setTimeout(() => firstInput?.focus(), 0);
-      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo guardar el producto.");
     } finally {
@@ -277,13 +265,12 @@ export default function ProductCommercialExperience() {
             <div>
               <p>UNIDAD COMERCIAL</p>
               <h2>{current ? "Modificar producto" : "Registrar producto"}</h2>
-              <small>{current ? "Actualiza los datos necesarios y guarda los cambios." : "Guarda un producto y el formulario quedará listo para capturar el siguiente, sin recargar CIV."}</small>
+              <small>{current ? "Actualiza los datos necesarios y guarda los cambios." : "Guarda el producto y CIV volverá al inventario sin recargar toda la aplicación."}</small>
             </div>
             <button className={styles.close} type="button" onClick={close} disabled={busy}>×</button>
           </header>
           <form className={styles.form} onSubmit={submit}>
             {error && <div className={styles.error}>{error}</div>}
-            {notice && !current && <div className="alert success">{notice}</div>}
             <div className={styles.grid}>
               <label className={styles.field}><span>Código *</span><input name="sku" defaultValue={current?.sku} required autoComplete="off" /></label>
               <label className={styles.field}><span>Producto *</span><input name="name" defaultValue={current?.name} required autoComplete="off" /></label>
@@ -316,7 +303,7 @@ export default function ProductCommercialExperience() {
                 {unit === "juego" && <small>El contenido interno del juego es informativo para el producto, no una unidad de venta.</small>}
               </div>
             </div>
-            <footer className={styles.actions}><button type="button" className={styles.cancel} onClick={close} disabled={busy}>{current ? "Cancelar" : "Terminar"}</button><button className={styles.save} disabled={busy}>{busy ? "Guardando…" : current ? "Guardar cambios" : "Guardar y registrar otro"}</button></footer>
+            <footer className={styles.actions}><button type="button" className={styles.cancel} onClick={close} disabled={busy}>Cancelar</button><button className={styles.save} disabled={busy}>{busy ? "Guardando…" : current ? "Guardar cambios" : "Guardar producto"}</button></footer>
           </form>
         </section>
       </div>,
