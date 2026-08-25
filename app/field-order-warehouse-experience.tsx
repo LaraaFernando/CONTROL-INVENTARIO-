@@ -55,7 +55,8 @@ export default function FieldOrderWarehouseExperience() {
     const sync = () => {
       const heading = document.querySelector<HTMLElement>(".content h1");
       const content = document.querySelector<HTMLElement>(".content");
-      if (!content || heading?.textContent?.trim() !== "Ventas") {
+      const currentTitle = heading?.textContent?.trim() || "";
+      if (!content || !["Ventas", "Pedido", "Pedidos"].includes(currentTitle)) {
         setMount((current) => current ? null : current);
         return;
       }
