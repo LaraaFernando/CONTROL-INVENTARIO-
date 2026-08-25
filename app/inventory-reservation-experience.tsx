@@ -61,6 +61,12 @@ export default function InventoryReservationExperience() {
     return () => window.clearTimeout(timer);
   }, [mount, load]);
 
+  useEffect(() => {
+    const refresh = () => { void load(); };
+    window.addEventListener("civ:inventory-updated", refresh);
+    return () => window.removeEventListener("civ:inventory-updated", refresh);
+  }, [load]);
+
   const reserved = useMemo(() => products.filter((product) => product.reservedStock > 0), [products]);
   const totalPhysical = useMemo(() => products.reduce((sum, product) => sum + product.currentStock, 0), [products]);
   const totalReserved = useMemo(() => products.reduce((sum, product) => sum + product.reservedStock, 0), [products]);
