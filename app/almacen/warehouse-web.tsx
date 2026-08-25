@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./warehouse-web.module.css";
 
@@ -190,7 +191,7 @@ export default function WarehouseWeb() {
         <div className={styles.logo}>CIV</div>
         <h1>CIV Almacén</h1>
         <p>Inicia sesión en CIV para abrir el tablero de almacén.</p>
-        <a href="/" className={styles.primaryLink}>Ir a iniciar sesión</a>
+        <Link href="/" className={styles.primaryLink}>Ir a iniciar sesión</Link>
       </section>
     </main>;
   }
@@ -201,7 +202,7 @@ export default function WarehouseWeb() {
         <div className={styles.logo}>CIV</div>
         <h1>Acceso de almacén</h1>
         <p>Tu usuario no tiene permiso para administrar pedidos del almacén.</p>
-        <a href="/" className={styles.primaryLink}>Volver a CIV</a>
+        <Link href="/" className={styles.primaryLink}>Volver a CIV</Link>
       </section>
     </main>;
   }
@@ -211,8 +212,8 @@ export default function WarehouseWeb() {
       <div className={styles.brand}><div className={styles.logo}>CIV</div><div><strong>CIV Almacén</strong><small>Pedidos e inventario</small></div></div>
       <nav>
         <button className={styles.active}><span>▣</span>Pedidos</button>
-        <a href="/#inventario"><span>▦</span>Inventario completo</a>
-        <a href="/"><span>⌂</span>Abrir CIV</a>
+        <Link href="/#inventario"><span>▦</span>Inventario completo</Link>
+        <Link href="/"><span>⌂</span>Abrir CIV</Link>
       </nav>
       <div className={styles.user}><strong>{auth.user?.displayName}</strong><small>Actualización automática cada 12 s</small></div>
     </aside>
