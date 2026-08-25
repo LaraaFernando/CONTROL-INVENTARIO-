@@ -50,6 +50,7 @@ export default function InventoryQuickSearchExperience() {
       const json = await response.json() as Data & { error?: string };
       if (!response.ok) throw new Error(json.error || "No se pudo cargar el inventario.");
       setProducts(json.products ?? []);
+      setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo cargar el inventario.");
     }
@@ -58,6 +59,12 @@ export default function InventoryQuickSearchExperience() {
   useEffect(() => {
     const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => { void load(); };
+    window.addEventListener("civ:inventory-updated", refresh);
+    return () => window.removeEventListener("civ:inventory-updated", refresh);
   }, [load]);
 
   useEffect(() => {
