@@ -1,9 +1,22 @@
 // Bump the shell version when a release must be surfaced to installed PWAs.
-const CACHE = "civ-shell-v2";
+const CACHE = "civ-shell-v3";
 const SHELL = ["/manifest.webmanifest", "/favicon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"];
 self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
 self.addEventListener("message", event => { if (event.data?.type === "SKIP_WAITING") self.skipWaiting(); });
 self.addEventListener("activate", event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const target = event.notification.data?.url || "/";
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windows => {
+    for (const client of windows) {
+      if ("focus" in client) {
+        if ("navigate" in client) client.navigate(target);
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
+  }));
+});
 self.addEventListener("fetch", event => {
   if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
   if (event.request.mode === "navigate" || new URL(event.request.url).pathname.startsWith("/api/")) return;
