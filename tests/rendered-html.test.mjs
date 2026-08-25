@@ -111,3 +111,22 @@ test("builds warehouse order alerts and canceled-sale cleanup", async () => {
   assert.match(scripts, /Ya no debe surtirse ni contabilizarse como venta/);
   assert.match(scripts, /\/api\/field-order-warehouse/);
 });
+
+test("builds WhatsApp sharing for field orders", async () => {
+  const assetsUrl = new URL("../dist/client/assets/", import.meta.url);
+  const assetNames = await readdir(assetsUrl);
+  const scripts = (
+    await Promise.all(
+      assetNames
+        .filter((name) => name.endsWith(".js"))
+        .map((name) => readFile(new URL(name, assetsUrl), "utf8")),
+    )
+  ).join("\n");
+
+  assert.match(scripts, /Enviar por WhatsApp/);
+  assert.match(scripts, /Compartir por WhatsApp/);
+  assert.match(scripts, /Pedido CIV/);
+  assert.match(scripts, /https:\/\/wa\.me\/\?text=/);
+  assert.match(scripts, /Productos:/);
+  assert.match(scripts, /Levantó:/);
+});
