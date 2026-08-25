@@ -22,9 +22,10 @@ import SalesUnitPolicy from "./sales-unit-policy";
 import SimpleNavigationRepair from "./simple-navigation-repair";
 import TransactionSafetyExperience from "./transaction-safety-experience";
 import VisualCodeReaderExperience from "./visual-code-reader-experience";
+import WarehouseAlertsExperience from "./warehouse-alerts-experience";
 
 export const dynamic = "force-dynamic";
 
 export default function Home() {
-  return <><InventoryApp /><LiveInventorySync /><SalesUnitPolicy /><SalesExperience /><BlockOneExperience /><SimpleNavigationRepair /><BlockOneNavigationFix /><BlockTwoExperience /><AdvancedReceivingExperience /><ProductCommercialExperience /><CommercialMovementExperience /><PurchaseOrderCommercialExperience /><InventoryQuickSearchExperience /><InventoryReservationExperience /><MovementCategoriesExperience /><VisualCodeReaderExperience /><ReplenishmentExperience /><BusinessInsightsExperience /><TransactionSafetyExperience /><SaleCancellationExperience /><ProductSuppliersExperience /><SaleDeliveryExperience /><FieldOrderExperience /><FieldOrderWarehouseExperience /></>;
+  return <><InventoryApp /><LiveInventorySync /><SalesUnitPolicy /><SalesExperience /><BlockOneExperience /><SimpleNavigationRepair /><BlockOneNavigationFix /><BlockTwoExperience /><AdvancedReceivingExperience /><ProductCommercialExperience /><CommercialMovementExperience /><PurchaseOrderCommercialExperience /><InventoryQuickSearchExperience /><InventoryReservationExperience /><MovementCategoriesExperience /><VisualCodeReaderExperience /><ReplenishmentExperience /><BusinessInsightsExperience /><TransactionSafetyExperience /><SaleCancellationExperience /><ProductSuppliersExperience /><SaleDeliveryExperience /><FieldOrderExperience /><FieldOrderWarehouseExperience /><WarehouseAlertsExperience /></>;
 }
