@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { boxSummary, normalizeCommercialUnit, unitLabel, validBoxFactor } from "./commercial-units";
 import styles from "./product-commercial-experience.module.css";
@@ -33,6 +33,21 @@ function titleCase(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("La operación tardó demasiado. Intenta de nuevo; CIV no dejó la pantalla bloqueada.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export default function ProductCommercialExperience() {
   const [data, setData] = useState<Data | null>(null);
   const [editing, setEditing] = useState<Product | null | undefined>(undefined);
@@ -41,9 +56,11 @@ export default function ProductCommercialExperience() {
   const [boxFactor, setBoxFactor] = useState("0");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const openingRef = useRef(false);
 
   const load = useCallback(async () => {
-    const response = await fetch("/api/data", { cache: "no-store" });
+    const response = await fetchWithTimeout("/api/data", { cache: "no-store" });
     const json = await response.json() as Data & { error?: string };
     if (!response.ok) throw new Error(json.error || "No se pudo cargar el inventario.");
     setData(json);
@@ -119,6 +136,12 @@ export default function ProductCommercialExperience() {
   }, [load, normalizeInventory]);
 
   useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
     function capture(event: MouseEvent) {
       const target = event.target as HTMLElement | null;
       const button = target?.closest("button");
@@ -132,6 +155,8 @@ export default function ProductCommercialExperience() {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
+      if (openingRef.current || busy) return;
+      openingRef.current = true;
       void (async () => {
         try {
           const current = await load();
@@ -154,12 +179,14 @@ export default function ProductCommercialExperience() {
           setError("");
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "No se pudo abrir el producto.");
+        } finally {
+          openingRef.current = false;
         }
       })();
     }
     document.addEventListener("click", capture, true);
     return () => document.removeEventListener("click", capture, true);
-  }, [load]);
+  }, [busy, load]);
 
   const basePlural = useMemo(() => unitLabel(unit, true), [unit]);
   const boxNumber = validBoxFactor(boxEnabled ? Number(boxFactor) : 0);
@@ -173,18 +200,22 @@ export default function ProductCommercialExperience() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const wasEditing = Boolean(editing);
+    const sku = String(form.get("sku") ?? "").trim().toUpperCase();
+    const name = String(form.get("name") ?? "").trim();
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/product-commercial", {
+      const response = await fetchWithTimeout("/api/product-commercial", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          action: editing ? "edit" : "add",
+          action: wasEditing ? "edit" : "add",
           id: editing?.id,
-          sku: form.get("sku"),
-          name: form.get("name"),
+          sku,
+          name,
           category: form.get("category"),
           unit,
           cost: form.get("cost"),
@@ -198,8 +229,24 @@ export default function ProductCommercialExperience() {
       });
       const json = await response.json() as { error?: string };
       if (!response.ok) throw new Error(json.error || "No se pudo guardar el producto.");
-      window.alert(editing ? "Producto actualizado." : "Producto registrado.");
-      window.location.reload();
+
+      setNotice(wasEditing
+        ? `${sku} · ${name} actualizado correctamente.`
+        : `${sku} · ${name} registrado. Puedes capturar el siguiente producto.`);
+      window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
+      void load().catch(() => undefined);
+
+      if (wasEditing) {
+        setEditing(undefined);
+      } else {
+        formElement.reset();
+        setEditing(null);
+        setUnit("pieza");
+        setBoxEnabled(false);
+        setBoxFactor("0");
+        const firstInput = formElement.querySelector<HTMLInputElement>('input[name="sku"]');
+        window.setTimeout(() => firstInput?.focus(), 0);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo guardar el producto.");
     } finally {
@@ -207,59 +254,73 @@ export default function ProductCommercialExperience() {
     }
   }
 
-  if (editing === undefined || !data) return null;
+  if (!data) return null;
+
+  const banner = notice ? createPortal(
+    <div className="update-banner">
+      <span><strong>Inventario actualizado</strong><small>{notice}</small></span>
+      <button type="button" onClick={() => setNotice("")}>Cerrar</button>
+    </div>,
+    document.body,
+  ) : null;
+
+  if (editing === undefined) return banner;
   const canSeeCost = Boolean(data.auth.permissions["products.view_cost"]);
   const current = editing;
 
-  return createPortal(
-    <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <section className={styles.modal} role="dialog" aria-modal="true" aria-label={current ? "Modificar producto" : "Nuevo producto"}>
-        <header className={styles.head}>
-          <div>
-            <p>UNIDAD COMERCIAL</p>
-            <h2>{current ? "Modificar producto" : "Registrar producto"}</h2>
-            <small>El inventario, costo, precio, mínimo y meta se controlan siempre en la unidad que realmente vendes.</small>
-          </div>
-          <button className={styles.close} type="button" onClick={close} disabled={busy}>×</button>
-        </header>
-        <form className={styles.form} onSubmit={submit}>
-          {error && <div className={styles.error}>{error}</div>}
-          <div className={styles.grid}>
-            <label className={styles.field}><span>Código *</span><input name="sku" defaultValue={current?.sku} required /></label>
-            <label className={styles.field}><span>Producto *</span><input name="name" defaultValue={current?.name} required /></label>
-            <label className={styles.field}><span>Categoría</span><input name="category" defaultValue={current?.category} /></label>
-            <label className={styles.field}><span>Unidad de inventario y venta *</span><select value={unit} onChange={(event) => setUnit(event.target.value)}><option value="pieza">Pieza</option><option value="unidad">Unidad</option><option value="juego">Juego</option></select></label>
-
-            <div className={styles.explain}>
-              <strong>1 {unitLabel(unit)} = 1 unidad de inventario</strong>
-              <span>{unit === "juego" ? "Si dentro del juego hay paquetes, brocas u otras piezas, ese contenido interno no multiplica el stock ni el precio. Si vendes 5 juegos, CIV descuenta 5 juegos." : `CIV contará y valorará este producto en ${basePlural}.`}</span>
+  return <>
+    {banner}
+    {createPortal(
+      <div className={styles.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+        <section className={styles.modal} role="dialog" aria-modal="true" aria-label={current ? "Modificar producto" : "Nuevo producto"}>
+          <header className={styles.head}>
+            <div>
+              <p>UNIDAD COMERCIAL</p>
+              <h2>{current ? "Modificar producto" : "Registrar producto"}</h2>
+              <small>{current ? "Actualiza los datos necesarios y guarda los cambios." : "Guarda un producto y el formulario quedará listo para capturar el siguiente, sin recargar CIV."}</small>
             </div>
+            <button className={styles.close} type="button" onClick={close} disabled={busy}>×</button>
+          </header>
+          <form className={styles.form} onSubmit={submit}>
+            {error && <div className={styles.error}>{error}</div>}
+            {notice && !current && <div className="alert success">{notice}</div>}
+            <div className={styles.grid}>
+              <label className={styles.field}><span>Código *</span><input name="sku" defaultValue={current?.sku} required autoComplete="off" /></label>
+              <label className={styles.field}><span>Producto *</span><input name="name" defaultValue={current?.name} required autoComplete="off" /></label>
+              <label className={styles.field}><span>Categoría</span><input name="category" defaultValue={current?.category} /></label>
+              <label className={styles.field}><span>Unidad de inventario y venta *</span><select value={unit} onChange={(event) => setUnit(event.target.value)}><option value="pieza">Pieza</option><option value="unidad">Unidad</option><option value="juego">Juego</option></select></label>
 
-            {canSeeCost && <label className={styles.field}><span>Costo por {unitLabel(unit)}</span><input name="cost" type="number" min="0" step="0.01" defaultValue={current?.cost ?? 0} /></label>}
-            <label className={styles.field}><span>Precio de venta por {unitLabel(unit)}</span><input name="salePrice" type="number" min="0" step="0.01" defaultValue={current?.salePrice ?? 0} required /></label>
-            {!current && <label className={styles.field}><span>Existencia inicial ({basePlural})</span><input name="initialStock" type="number" min="0" step="1" defaultValue="0" /></label>}
-            <label className={styles.field}><span>Stock mínimo ({basePlural})</span><input name="minimumStock" type="number" min="0" step="1" defaultValue={current?.minimumStock ?? 0} /></label>
-            <label className={styles.field}><span>Stock objetivo ({basePlural})</span><input name="targetStock" type="number" min="0" step="1" defaultValue={current?.targetStock ?? 0} /></label>
-            <label className={styles.field}><span>Ubicación</span><input name="location" defaultValue={current?.location} /></label>
+              <div className={styles.explain}>
+                <strong>1 {unitLabel(unit)} = 1 unidad de inventario</strong>
+                <span>{unit === "juego" ? "Si dentro del juego hay paquetes, brocas u otras piezas, ese contenido interno no multiplica el stock ni el precio. Si vendes 5 juegos, CIV descuenta 5 juegos." : `CIV contará y valorará este producto en ${basePlural}.`}</span>
+              </div>
 
-            <label className={styles.boxToggle}>
-              <input type="checkbox" checked={boxEnabled} onChange={(event) => { setBoxEnabled(event.target.checked); if (!event.target.checked) setBoxFactor("0"); else if (!validBoxFactor(Number(boxFactor))) setBoxFactor("2"); }} />
-              <span><b>También se maneja por caja</b><small>Actívalo solo si quieres registrar o vender cajas completas.</small></span>
-            </label>
+              {canSeeCost && <label className={styles.field}><span>Costo por {unitLabel(unit)}</span><input name="cost" type="number" min="0" step="0.01" defaultValue={current?.cost ?? 0} /></label>}
+              <label className={styles.field}><span>Precio de venta por {unitLabel(unit)}</span><input name="salePrice" type="number" min="0" step="0.01" defaultValue={current?.salePrice ?? 0} required /></label>
+              {!current && <label className={styles.field}><span>Existencia inicial ({basePlural})</span><input name="initialStock" type="number" min="0" step="1" defaultValue="0" /></label>}
+              <label className={styles.field}><span>Stock mínimo ({basePlural})</span><input name="minimumStock" type="number" min="0" step="1" defaultValue={current?.minimumStock ?? 0} /></label>
+              <label className={styles.field}><span>Stock objetivo ({basePlural})</span><input name="targetStock" type="number" min="0" step="1" defaultValue={current?.targetStock ?? 0} /></label>
+              <label className={styles.field}><span>Ubicación</span><input name="location" defaultValue={current?.location} /></label>
 
-            {boxEnabled && <label className={`${styles.field} ${styles.wide}`}><span>{titleCase(basePlural)} por caja *</span><input type="number" min="2" step="1" value={boxFactor} onChange={(event) => setBoxFactor(event.target.value)} required /></label>}
+              <label className={styles.boxToggle}>
+                <input type="checkbox" checked={boxEnabled} onChange={(event) => { setBoxEnabled(event.target.checked); if (!event.target.checked) setBoxFactor("0"); else if (!validBoxFactor(Number(boxFactor))) setBoxFactor("2"); }} />
+                <span><b>También se maneja por caja</b><small>Actívalo solo si quieres registrar o vender cajas completas.</small></span>
+              </label>
 
-            <div className={styles.summary}>
-              <b>Resumen</b>
-              <small>1 {unitLabel(unit)} = 1 unidad de inventario.</small>
-              <small>{boxEnabled && boxNumber ? boxSummary({ unit, boxFactor: boxNumber }) : "Este producto no tendrá presentación de caja."}</small>
-              {unit === "juego" && <small>El contenido interno del juego es informativo para el producto, no una unidad de venta.</small>}
+              {boxEnabled && <label className={`${styles.field} ${styles.wide}`}><span>{titleCase(basePlural)} por caja *</span><input type="number" min="2" step="1" value={boxFactor} onChange={(event) => setBoxFactor(event.target.value)} required /></label>}
+
+              <div className={styles.summary}>
+                <b>Resumen</b>
+                <small>1 {unitLabel(unit)} = 1 unidad de inventario.</small>
+                <small>{boxEnabled && boxNumber ? boxSummary({ unit, boxFactor: boxNumber }) : "Este producto no tendrá presentación de caja."}</small>
+                {unit === "juego" && <small>El contenido interno del juego es informativo para el producto, no una unidad de venta.</small>}
+              </div>
             </div>
-          </div>
-          <footer className={styles.actions}><button type="button" className={styles.cancel} onClick={close} disabled={busy}>Cancelar</button><button className={styles.save} disabled={busy}>{busy ? "Guardando…" : "Guardar producto"}</button></footer>
-        </form>
-      </section>
-    </div>,
-    document.body,
-  );
+            <footer className={styles.actions}><button type="button" className={styles.cancel} onClick={close} disabled={busy}>{current ? "Cancelar" : "Terminar"}</button><button className={styles.save} disabled={busy}>{busy ? "Guardando…" : current ? "Guardar cambios" : "Guardar y registrar otro"}</button></footer>
+          </form>
+        </section>
+      </div>,
+      document.body,
+    )}
+  </>;
 }
