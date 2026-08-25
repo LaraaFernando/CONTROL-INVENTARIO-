@@ -15,14 +15,59 @@ type Product = {
   availableStock: number;
 };
 type Client = { id: number; name: string; businessName: string; phone: string; address: string };
-type Order = { id: number; folio: string; status: string; totalAmount: number; createdBy: string; businessDate: string; createdAt: string; clientName: string; lineCount: number };
+type OrderItem = {
+  id?: number;
+  orderId?: number;
+  productId: number;
+  sku: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitAmount: number;
+  totalAmount: number;
+};
+type Order = {
+  id: number;
+  folio: string;
+  status: string;
+  totalAmount: number;
+  notes: string;
+  createdBy: string;
+  businessDate: string;
+  createdAt: string;
+  clientName: string;
+  clientPhone: string;
+  lineCount: number;
+  items: OrderItem[];
+};
 type Context = { products: Product[]; clients: Client[]; orders: Order[]; canCreateOrder: boolean; canCreateClient: boolean };
 type Line = { productId: number; quantity: number };
+type CreatedOrder = Omit<Order, "businessDate" | "createdAt">;
 
 const money = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
 
 function normalize(value: string) {
   return value.trim().toLocaleLowerCase("es-MX").replace(/^#/, "");
+}
+
+function buildWhatsAppMessage(order: Pick<Order, "folio" | "clientName" | "totalAmount" | "notes" | "createdBy" | "items">) {
+  const lines = [
+    "📦 *Pedido CIV*",
+    `Folio: *${order.folio}*`,
+    `Cliente: ${order.clientName}`,
+    "",
+    "*Productos:*",
+    ...order.items.map((item) => `• ${item.quantity} ${item.unit || "pieza"} · ${item.sku} · ${item.productName} — ${money.format(Number(item.totalAmount || 0))}`),
+    "",
+    `*Total: ${money.format(Number(order.totalAmount || 0))}*`,
+  ];
+  if (order.notes) lines.push(`Notas: ${order.notes}`);
+  if (order.createdBy) lines.push(`Levantó: ${order.createdBy}`);
+  return lines.join("\n");
+}
+
+function whatsappUrl(order: Pick<Order, "folio" | "clientName" | "totalAmount" | "notes" | "createdBy" | "items">) {
+  return `https://wa.me/?text=${encodeURIComponent(buildWhatsAppMessage(order))}`;
 }
 
 export default function FieldOrderExperience() {
@@ -37,6 +82,7 @@ export default function FieldOrderExperience() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [lastCreatedOrder, setLastCreatedOrder] = useState<CreatedOrder | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -110,6 +156,7 @@ export default function FieldOrderExperience() {
   function startOrder() {
     setError("");
     setNotice("");
+    setLastCreatedOrder(null);
     setClientId(0);
     setLines([]);
     setSearch("");
@@ -128,9 +175,34 @@ export default function FieldOrderExperience() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "create_order", clientId, notes, items: lines }),
       });
-      const json = await response.json() as { folio?: string; totalAmount?: number; error?: string };
-      if (!response.ok) throw new Error(json.error || "No se pudo enviar el pedido.");
+      const json = await response.json() as {
+        orderId?: number;
+        folio?: string;
+        status?: string;
+        totalAmount?: number;
+        lineCount?: number;
+        clientName?: string;
+        clientPhone?: string;
+        notes?: string;
+        createdBy?: string;
+        items?: OrderItem[];
+        error?: string;
+      };
+      if (!response.ok || !json.orderId || !json.folio) throw new Error(json.error || "No se pudo enviar el pedido.");
+      const createdOrder: CreatedOrder = {
+        id: Number(json.orderId),
+        folio: json.folio,
+        status: json.status || "levantado",
+        totalAmount: Number(json.totalAmount || 0),
+        notes: json.notes || "",
+        createdBy: json.createdBy || "",
+        clientName: json.clientName || "Cliente",
+        clientPhone: json.clientPhone || "",
+        lineCount: Number(json.lineCount || json.items?.length || 0),
+        items: json.items ?? [],
+      };
       setOpen(false);
+      setLastCreatedOrder(createdOrder);
       setNotice(`Pedido ${json.folio} enviado al almacén por ${money.format(Number(json.totalAmount || 0))}. La mercancía quedó apartada.`);
       await load();
     } catch (reason) {
@@ -171,11 +243,14 @@ export default function FieldOrderExperience() {
         <div><strong style={{ display: "block", fontSize: 19 }}>Pedidos de campo</strong><small style={{ color: "var(--muted)" }}>Al enviarlo, CIV aparta la mercancía para que otro vendedor ya no la ofrezca.</small></div>
         {context?.canCreateOrder && <button type="button" className="primary" onClick={startOrder}>＋ Levantar pedido</button>}
       </div>
-      {notice && <div className="alert success" style={{ marginTop: 12 }}>{notice}</div>}
+      {notice && <div className="alert success" style={{ marginTop: 12 }}>
+        <span>{notice}</span>
+        {lastCreatedOrder && <a href={whatsappUrl(lastCreatedOrder)} target="_blank" rel="noreferrer" className="primary" style={{ display: "inline-flex", marginTop: 10, textDecoration: "none" }}>Enviar por WhatsApp</a>}
+      </div>}
       {context?.orders?.length ? <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
         {context.orders.slice(0, 4).map((order) => <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 12, borderRadius: 12, background: "var(--soft)" }}>
           <span><code style={{ fontWeight: 800 }}>{order.folio}</code><strong style={{ display: "block" }}>{order.clientName}</strong><small style={{ color: "var(--muted)" }}>{order.lineCount} partida{Number(order.lineCount) === 1 ? "" : "s"} · {order.createdBy}</small></span>
-          <span style={{ textAlign: "right" }}><b>{money.format(Number(order.totalAmount || 0))}</b><small style={{ display: "block", color: "var(--muted)" }}>Pedido levantado · apartado</small></span>
+          <span style={{ textAlign: "right", display: "grid", justifyItems: "end", gap: 6 }}><b>{money.format(Number(order.totalAmount || 0))}</b><small style={{ color: "var(--muted)" }}>Pedido levantado · apartado</small><a href={whatsappUrl(order)} target="_blank" rel="noreferrer" className="mini" style={{ textDecoration: "none" }}>Compartir por WhatsApp</a></span>
         </div>)}
       </div> : null}
     </section>

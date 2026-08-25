@@ -16,6 +16,31 @@ type ProductRow = {
 
 type ClientRow = { id: number; name: string; businessName: string; phone: string; address: string };
 type OrderItemInput = { productId?: unknown; quantity?: unknown };
+type OrderItemRow = {
+  id: number;
+  orderId: number;
+  productId: number;
+  quantity: number;
+  unitAmount: number;
+  totalAmount: number;
+  sku: string;
+  productName: string;
+  unit: string;
+};
+
+type OrderRow = {
+  id: number;
+  folio: string;
+  status: string;
+  totalAmount: number;
+  notes: string;
+  createdBy: string;
+  businessDate: string;
+  createdAt: string;
+  clientName: string;
+  clientPhone: string;
+  lineCount: number;
+};
 
 let schemaPromise: Promise<void> | null = null;
 
@@ -142,23 +167,52 @@ export async function GET(request: Request) {
     await ensureOperationalSchema();
     await ensureFieldOrderSchema();
 
-    const [productsResult, clientsResult, ordersResult] = await Promise.all([
+    const [productsResult, clientsResult, ordersResult, orderItemsResult] = await Promise.all([
       env.DB.prepare(`${productAvailabilitySql} ORDER BY p.name`).all<ProductRow>(),
       env.DB.prepare(`
         SELECT id, name, business_name AS businessName, phone, address
         FROM clients WHERE active = 1 ORDER BY name
       `).all<ClientRow>(),
       env.DB.prepare(`
-        SELECT o.id, o.folio, o.status, o.total_amount AS totalAmount, o.created_by AS createdBy,
-          o.business_date AS businessDate, o.created_at AS createdAt, c.name AS clientName,
-          COUNT(i.id) AS lineCount
+        SELECT o.id, o.folio, o.status, o.total_amount AS totalAmount, o.notes,
+          o.created_by AS createdBy, o.business_date AS businessDate, o.created_at AS createdAt,
+          c.name AS clientName, c.phone AS clientPhone, COUNT(i.id) AS lineCount
         FROM field_orders o
         INNER JOIN clients c ON c.id = o.client_id
         LEFT JOIN field_order_items i ON i.order_id = o.id
-        GROUP BY o.id, o.folio, o.status, o.total_amount, o.created_by, o.business_date, o.created_at, c.name
+        GROUP BY o.id, o.folio, o.status, o.total_amount, o.notes, o.created_by,
+          o.business_date, o.created_at, c.name, c.phone
         ORDER BY o.id DESC LIMIT 100
-      `).all(),
+      `).all<OrderRow>(),
+      env.DB.prepare(`
+        SELECT i.id, i.order_id AS orderId, i.product_id AS productId, i.quantity,
+          i.unit_amount AS unitAmount, i.total_amount AS totalAmount,
+          p.sku, p.name AS productName, p.unit
+        FROM field_order_items i
+        INNER JOIN products p ON p.id = i.product_id
+        WHERE i.order_id IN (SELECT id FROM field_orders ORDER BY id DESC LIMIT 100)
+        ORDER BY i.order_id DESC, i.id
+      `).all<OrderItemRow>(),
     ]);
+
+    const orderItems = orderItemsResult.results ?? [];
+    const orders = (ordersResult.results ?? []).map((row) => ({
+      ...row,
+      id: Number(row.id),
+      totalAmount: Number(row.totalAmount || 0),
+      lineCount: Number(row.lineCount || 0),
+      items: orderItems
+        .filter((item) => Number(item.orderId) === Number(row.id))
+        .map((item) => ({
+          ...item,
+          id: Number(item.id),
+          orderId: Number(item.orderId),
+          productId: Number(item.productId),
+          quantity: Number(item.quantity),
+          unitAmount: Number(item.unitAmount || 0),
+          totalAmount: Number(item.totalAmount || 0),
+        })),
+    }));
 
     return Response.json({
       products: (productsResult.results ?? []).map((row) => ({
@@ -168,7 +222,7 @@ export async function GET(request: Request) {
         availableStock: Number(row.availableStock || 0),
       })),
       clients: clientsResult.results ?? [],
-      orders: ordersResult.results ?? [],
+      orders,
       canCreateOrder: Boolean(user.permissions["movements.sale"] || user.permissions["orders.manage"]),
       canCreateClient: Boolean(user.permissions["clients.create"]),
       currentUser: { id: user.id, displayName: user.displayName },
@@ -213,8 +267,8 @@ export async function POST(request: Request) {
 
     const clientId = Number(body.clientId || 0);
     if (!clientId) throw new AuthError("Selecciona un cliente antes de enviar el pedido.", 400);
-    const client = await env.DB.prepare("SELECT id, name FROM clients WHERE id=? AND active=1 LIMIT 1")
-      .bind(clientId).first<{ id: number; name: string }>();
+    const client = await env.DB.prepare("SELECT id, name, phone FROM clients WHERE id=? AND active=1 LIMIT 1")
+      .bind(clientId).first<{ id: number; name: string; phone: string }>();
     if (!client) throw new AuthError("El cliente ya no existe o está inactivo.", 404);
 
     const items = Array.isArray(body.items) ? body.items as OrderItemInput[] : [];
@@ -230,7 +284,7 @@ export async function POST(request: Request) {
 
     const productsResult = await env.DB.prepare(productAvailabilitySql).all<ProductRow>();
     const products = new Map((productsResult.results ?? []).map((row) => [Number(row.id), row]));
-    const lines: Array<{ productId: number; quantity: number; unitAmount: number; totalAmount: number; sku: string; name: string; currentStock: number; reservedStock: number; availableStock: number }> = [];
+    const lines: Array<{ productId: number; quantity: number; unitAmount: number; totalAmount: number; sku: string; name: string; unit: string; currentStock: number; reservedStock: number; availableStock: number }> = [];
 
     for (const [productId, quantity] of requestedByProduct) {
       const product = products.get(productId);
@@ -247,6 +301,7 @@ export async function POST(request: Request) {
         totalAmount: unitAmount * quantity,
         sku: product.sku,
         name: product.name,
+        unit: product.unit || "pieza",
         currentStock: Number(product.currentStock || 0),
         reservedStock: Number(product.reservedStock || 0),
         availableStock,
@@ -282,7 +337,27 @@ export async function POST(request: Request) {
       });
     }
 
-    return Response.json({ ok: true, orderId, folio, status: "levantado", totalAmount, lineCount: lines.length }, { status: 201 });
+    return Response.json({
+      ok: true,
+      orderId,
+      folio,
+      status: "levantado",
+      totalAmount,
+      lineCount: lines.length,
+      clientName: client.name,
+      clientPhone: client.phone || "",
+      notes,
+      createdBy: user.displayName,
+      items: lines.map((line) => ({
+        productId: line.productId,
+        sku: line.sku,
+        productName: line.name,
+        unit: line.unit,
+        quantity: line.quantity,
+        unitAmount: line.unitAmount,
+        totalAmount: line.totalAmount,
+      })),
+    }, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }
