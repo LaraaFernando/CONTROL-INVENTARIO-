@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { assertBusinessDateOpen, businessDate, ensureOperationalSchema, recordAudit } from "../../../db/operations";
 import { AuthError, requirePermission, requireUser } from "../../auth";
-import { normalizeCommercialUnit, presentationFactor, unitLabel } from "../../commercial-units";
+import { normalizeCommercialUnit, unitLabel } from "../../commercial-units";
 import { ensureSaleTrackingSchema, nextSaleFolio } from "../../sale-tracking";
 
 type SaleItemInput = { productId?: unknown; presentation?: unknown; quantity?: unknown };
@@ -81,11 +81,14 @@ export async function POST(request: Request) {
       const product = productMap.get(productId);
       if (!product) throw new AuthError("Uno de los productos ya no existe o está inactivo.", 404);
 
+      // Regla comercial de CIV: la cantidad capturada SIEMPRE corresponde a la
+      // unidad de venta configurada (pieza, unidad o juego). box_factor describe
+      // únicamente el empaque y jamás multiplica automáticamente una venta.
+      // También normalizamos clientes antiguos que todavía envíen presentation="caja".
       const baseUnit = normalizeCommercialUnit(product.unit);
-      const presentation = text(item.presentation).toLowerCase() || baseUnit;
-      const factor = presentationFactor(product, presentation);
-      if (!factor) throw new AuthError(`La presentación seleccionada no está configurada para ${product.name}.`, 400);
-      const requestedQuantity = quantity * factor;
+      const presentation = baseUnit;
+      const factor = 1;
+      const requestedQuantity = quantity;
       const previousStock = runningStock.has(productId) ? Number(runningStock.get(productId)) : Number(product.currentStock);
       const fulfilledQuantity = Math.min(requestedQuantity, Math.max(0, previousStock));
       const pendingQuantity = Math.max(0, requestedQuantity - fulfilledQuantity);

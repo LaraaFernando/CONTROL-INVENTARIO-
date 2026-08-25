@@ -47,12 +47,12 @@ export default function SaleCancellationExperience() {
       event.stopImmediatePropagation();
       if (busy) return;
 
-      const reason = window.prompt("Motivo obligatorio de anulación de la venta");
+      const reason = window.prompt("Motivo obligatorio para anular este producto de la venta");
       if (!reason?.trim()) return;
 
       setBusy(true);
       setError("");
-      setMessage("Anulando la venta y restaurando inventario…");
+      setMessage("Anulando únicamente el producto seleccionado y restaurando su inventario…");
       try {
         const response = await fetch("/api/sales/cancel", {
           method: "POST",
@@ -60,13 +60,13 @@ export default function SaleCancellationExperience() {
           body: JSON.stringify({ movementId, reason: reason.trim() }),
         });
         const json = await response.json() as CancelResult;
-        if (!response.ok) throw new Error(json.error || "No se pudo anular la venta.");
-        setMessage(json.message || "Venta anulada e inventario restaurado.");
+        if (!response.ok) throw new Error(json.error || "No se pudo anular el producto de la venta.");
+        setMessage(json.message || "Producto anulado e inventario restaurado. El resto de la venta continúa vigente.");
         window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
         window.setTimeout(() => window.location.reload(), 250);
       } catch (reasonValue) {
         setMessage("");
-        setError(reasonValue instanceof Error ? reasonValue.message : "No se pudo anular la venta.");
+        setError(reasonValue instanceof Error ? reasonValue.message : "No se pudo anular el producto de la venta.");
       } finally {
         setBusy(false);
       }
@@ -79,7 +79,7 @@ export default function SaleCancellationExperience() {
   if (!message && !error) return null;
   return <div className="update-banner">
     <span>
-      <strong>{error ? "No se pudo anular la venta" : "Actualizando inventario"}</strong>
+      <strong>{error ? "No se pudo anular el producto" : "Actualizando inventario"}</strong>
       <small>{error || message}</small>
     </span>
     {error && <button type="button" onClick={() => setError("")}>Cerrar</button>}
