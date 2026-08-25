@@ -70,7 +70,8 @@ test("builds the larger mobile navigation and appearance settings", async () => 
     new URL("../dist/client/sw.js", import.meta.url),
     "utf8",
   );
-  assert.match(serviceWorker, /civ-shell-v2/);
+  assert.match(serviceWorker, /civ-shell-v3/);
+  assert.match(serviceWorker, /notificationclick/);
 });
 
 test("builds classified movement navigation and canceled-sale drilldown", async () => {
@@ -90,4 +91,23 @@ test("builds classified movement navigation and canceled-sale drilldown", async 
   assert.match(scripts, /Anulación parcial/);
   assert.match(scripts, /Compras y entradas/);
   assert.match(scripts, /\/api\/movement-history/);
+});
+
+test("builds warehouse order alerts and canceled-sale cleanup", async () => {
+  const assetsUrl = new URL("../dist/client/assets/", import.meta.url);
+  const assetNames = await readdir(assetsUrl);
+  const scripts = (
+    await Promise.all(
+      assetNames
+        .filter((name) => name.endsWith(".js"))
+        .map((name) => readFile(new URL(name, assetsUrl), "utf8")),
+    )
+  ).join("\n");
+
+  assert.match(scripts, /Activar notificaciones/);
+  assert.match(scripts, /Nuevo pedido en CIV/);
+  assert.match(scripts, /civ-warehouse-last-order-id/);
+  assert.match(scripts, /Venta anulada · movimiento revertido/);
+  assert.match(scripts, /Ya no debe surtirse ni contabilizarse como venta/);
+  assert.match(scripts, /\/api\/field-order-warehouse/);
 });
