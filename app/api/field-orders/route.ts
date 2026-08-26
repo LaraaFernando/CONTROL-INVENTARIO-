@@ -180,6 +180,7 @@ export async function GET(request: Request) {
         FROM field_orders o
         INNER JOIN clients c ON c.id = o.client_id
         LEFT JOIN field_order_items i ON i.order_id = o.id
+        WHERE o.status <> 'cancelado'
         GROUP BY o.id, o.folio, o.status, o.total_amount, o.notes, o.created_by,
           o.business_date, o.created_at, c.name, c.phone
         ORDER BY o.id DESC LIMIT 100
@@ -190,7 +191,9 @@ export async function GET(request: Request) {
           p.sku, p.name AS productName, p.unit
         FROM field_order_items i
         INNER JOIN products p ON p.id = i.product_id
-        WHERE i.order_id IN (SELECT id FROM field_orders ORDER BY id DESC LIMIT 100)
+        WHERE i.order_id IN (
+          SELECT id FROM field_orders WHERE status <> 'cancelado' ORDER BY id DESC LIMIT 100
+        )
         ORDER BY i.order_id DESC, i.id
       `).all<OrderItemRow>(),
     ]);
