@@ -30,14 +30,32 @@ type Movement = {
   businessDate: string;
 };
 
+type OrderHistory = {
+  id: number;
+  folio: string;
+  status: string;
+  totalAmount: number;
+  notes: string;
+  createdBy: string;
+  businessDate: string;
+  createdAt: string;
+  canceledAt: string | null;
+  canceledReason: string;
+  updatedBy: string;
+  clientName: string;
+  lineCount: number;
+  totalQuantity: number;
+};
+
 type HistoryData = {
   rows: Movement[];
+  orders: OrderHistory[];
   canDelete: boolean;
   canAudit: boolean;
   error?: string;
 };
 
-type Category = "ventas" | "ventas-anuladas" | "compras" | "devoluciones" | "ajustes";
+type Category = "ventas" | "ventas-anuladas" | "pedidos" | "pedidos-anulados" | "compras" | "devoluciones" | "ajustes";
 
 type SaleGroup = {
   key: string;
@@ -63,6 +81,13 @@ const movementLabels: Record<string, string> = {
   devolucion_proveedor: "Devolución a proveedor",
   ajuste_positivo: "Ajuste positivo",
   ajuste_negativo: "Ajuste negativo",
+};
+const orderStatusLabels: Record<string, string> = {
+  levantado: "Pedido levantado",
+  preparando: "Preparando",
+  transito: "En tránsito",
+  entregado: "Entregado",
+  cancelado: "Cancelado",
 };
 
 function dateTime(value: string | null | undefined) {
@@ -178,6 +203,26 @@ function SaleCards({ groups, canceled, canDelete, canAudit, onVoid, onAudit }: {
   </div>;
 }
 
+function OrderList({ rows, canceled }: { rows: OrderHistory[]; canceled: boolean }) {
+  if (!rows.length) return <div className="field-note">No hay registros en esta categoría.</div>;
+  return <div style={{ display: "grid", gap: 10 }}>
+    {rows.map((row) => <article key={`${canceled ? "cancel" : "created"}-${row.id}`} style={{ border: "1px solid var(--line)", borderRadius: 16, background: "var(--card)", padding: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12 }}>
+        <span>
+          <small style={{ color: canceled ? "var(--danger)" : "var(--muted)", fontWeight: 800 }}>{canceled ? "PEDIDO ANULADO" : "PEDIDO REALIZADO"}</small>
+          <code style={{ display: "block", fontWeight: 800, marginTop: 3 }}>{row.folio}</code>
+          <strong style={{ display: "block", marginTop: 3 }}>{row.clientName}</strong>
+          <small style={{ display: "block", color: "var(--muted)", marginTop: 4 }}>{row.lineCount} partida{row.lineCount === 1 ? "" : "s"} · {row.totalQuantity} unidad{row.totalQuantity === 1 ? "" : "es"}</small>
+        </span>
+        <span style={{ textAlign: "right" }}><strong style={{ display: "block", fontSize: 18 }}>{money.format(Number(row.totalAmount || 0))}</strong><small style={{ color: "var(--muted)" }}>{orderStatusLabels[row.status] || row.status}</small></span>
+      </div>
+      {!canceled && <div className="field-note" style={{ marginTop: 10 }}>Realizado {dateTime(row.createdAt)}{row.createdBy ? ` por ${row.createdBy}` : ""}.{row.status === "cancelado" ? " Este pedido fue anulado posteriormente y también aparece en Pedidos anulados." : ""}</div>}
+      {canceled && <div className="field-note" style={{ marginTop: 10 }}><b>Anulado {dateTime(row.canceledAt)}</b>{row.updatedBy ? ` por ${row.updatedBy}` : ""}{row.canceledReason ? ` · Motivo: ${row.canceledReason}` : ""}</div>}
+      {row.notes && <small style={{ display: "block", color: "var(--muted)", marginTop: 8 }}>Nota: {row.notes}</small>}
+    </article>)}
+  </div>;
+}
+
 function MovementList({ rows, canDelete, canAudit, onVoid, onAudit }: {
   rows: Movement[];
   canDelete: boolean;
@@ -286,6 +331,8 @@ export default function MovementCategoriesExperience() {
   const saleGroups = useMemo(() => groupSales(data?.rows ?? []), [data]);
   const activeSales = useMemo(() => saleGroups.filter((group) => group.activeRows.length > 0), [saleGroups]);
   const canceledSales = useMemo(() => saleGroups.filter((group) => group.voidedRows.length > 0), [saleGroups]);
+  const orders = useMemo(() => data?.orders ?? [], [data]);
+  const canceledOrders = useMemo(() => orders.filter((row) => row.status === "cancelado" || Boolean(row.canceledAt)).slice().sort((left, right) => (right.canceledAt || right.createdAt).localeCompare(left.canceledAt || left.createdAt)), [orders]);
   const purchases = useMemo(() => (data?.rows ?? []).filter((row) => ["inventario_inicial", "entrada_compra"].includes(row.type)), [data]);
   const returns = useMemo(() => (data?.rows ?? []).filter((row) => ["devolucion_cliente", "devolucion_proveedor"].includes(row.type)), [data]);
   const adjustments = useMemo(() => (data?.rows ?? []).filter((row) => ["defectuoso", "ajuste_positivo", "ajuste_negativo"].includes(row.type)), [data]);
@@ -314,9 +361,11 @@ export default function MovementCategoriesExperience() {
 
   const title = category === "ventas" ? "Ventas realizadas"
     : category === "ventas-anuladas" ? "Ventas anuladas"
-      : category === "compras" ? "Compras y entradas"
-        : category === "devoluciones" ? "Devoluciones"
-          : category === "ajustes" ? "Ajustes e incidencias" : "Movimientos clasificados";
+      : category === "pedidos" ? "Pedidos realizados"
+        : category === "pedidos-anulados" ? "Pedidos anulados"
+          : category === "compras" ? "Compras y entradas"
+            : category === "devoluciones" ? "Devoluciones"
+              : category === "ajustes" ? "Ajustes e incidencias" : "Movimientos clasificados";
 
   return createPortal(<section style={{ marginBottom: 18 }}>
     {error && <div className="alert error">{error}<button type="button" onClick={() => setError("")}>×</button></div>}
@@ -330,12 +379,16 @@ export default function MovementCategoriesExperience() {
     {loading && !data ? <div className="loading">Clasificando movimientos…</div> : !category ? <div style={{ display: "grid", gap: 10 }}>
       <CategoryButton title="Ventas realizadas" note="Ventas vigentes agrupadas por folio y cliente." count={activeSales.length} onClick={() => setCategory("ventas")} />
       <CategoryButton title="Ventas anuladas" note="Anulaciones completas o parciales, con desglose por producto." count={canceledSales.length} onClick={() => setCategory("ventas-anuladas")} />
+      <CategoryButton title="Pedidos realizados" note="Cada pedido levantado queda registrado aquí desde el momento en que se solicita." count={orders.length} onClick={() => setCategory("pedidos")} />
+      <CategoryButton title="Pedidos anulados" note="Cada cancelación conserva fecha, usuario y motivo; el conteo aumenta por pedido anulado." count={canceledOrders.length} onClick={() => setCategory("pedidos-anulados")} />
       <CategoryButton title="Compras y entradas" note="Inventario inicial y entradas de mercancía." count={purchases.length} onClick={() => setCategory("compras")} />
       <CategoryButton title="Devoluciones" note="De cliente y a proveedor, separadas de las ventas." count={returns.length} onClick={() => setCategory("devoluciones")} />
       <CategoryButton title="Ajustes e incidencias" note="Ajustes positivos/negativos y producto defectuoso." count={adjustments.length} onClick={() => setCategory("ajustes")} />
     </div> : <div>
       {category === "ventas" && <SaleCards groups={activeSales} canceled={false} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "ventas-anuladas" && <SaleCards groups={canceledSales} canceled canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
+      {category === "pedidos" && <OrderList rows={orders} canceled={false} />}
+      {category === "pedidos-anulados" && <OrderList rows={canceledOrders} canceled />}
       {category === "compras" && <MovementList rows={purchases} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "devoluciones" && <MovementList rows={returns} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "ajustes" && <MovementList rows={adjustments} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}

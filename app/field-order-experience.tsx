@@ -132,6 +132,16 @@ export default function FieldOrderExperience() {
     return () => window.clearTimeout(timer);
   }, [mount, load]);
 
+  useEffect(() => {
+    const refresh = () => { if (mount) void load(); };
+    window.addEventListener("civ:inventory-updated", refresh);
+    window.addEventListener("civ:inventory-changed", refresh);
+    return () => {
+      window.removeEventListener("civ:inventory-updated", refresh);
+      window.removeEventListener("civ:inventory-changed", refresh);
+    };
+  }, [load, mount]);
+
   const results = useMemo(() => {
     const query = normalize(search);
     if (!query || !context) return [];
@@ -226,6 +236,8 @@ export default function FieldOrderExperience() {
       setLastCreatedOrder(createdOrder);
       setNotice(`Pedido ${json.folio} enviado al almacén por ${money.format(Number(json.totalAmount || 0))}. La mercancía quedó apartada.`);
       await load();
+      window.dispatchEvent(new CustomEvent("civ:inventory-updated"));
+      window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo enviar el pedido.");
       await load();
