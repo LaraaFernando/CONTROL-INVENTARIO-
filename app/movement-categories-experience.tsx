@@ -50,6 +50,7 @@ type OrderHistory = {
 type HistoryData = {
   rows: Movement[];
   orders: OrderHistory[];
+  orderSummary?: { active: number; canceled: number };
   canDelete: boolean;
   canAudit: boolean;
   error?: string;
@@ -216,7 +217,7 @@ function OrderList({ rows, canceled }: { rows: OrderHistory[]; canceled: boolean
         </span>
         <span style={{ textAlign: "right" }}><strong style={{ display: "block", fontSize: 18 }}>{money.format(Number(row.totalAmount || 0))}</strong><small style={{ color: "var(--muted)" }}>{orderStatusLabels[row.status] || row.status}</small></span>
       </div>
-      {!canceled && <div className="field-note" style={{ marginTop: 10 }}>Realizado {dateTime(row.createdAt)}{row.createdBy ? ` por ${row.createdBy}` : ""}.{row.status === "cancelado" ? " Este pedido fue anulado posteriormente y también aparece en Pedidos anulados." : ""}</div>}
+      {!canceled && <div className="field-note" style={{ marginTop: 10 }}>Realizado {dateTime(row.createdAt)}{row.createdBy ? ` por ${row.createdBy}` : ""}.</div>}
       {canceled && <div className="field-note" style={{ marginTop: 10 }}><b>Anulado {dateTime(row.canceledAt)}</b>{row.updatedBy ? ` por ${row.updatedBy}` : ""}{row.canceledReason ? ` · Motivo: ${row.canceledReason}` : ""}</div>}
       {row.notes && <small style={{ display: "block", color: "var(--muted)", marginTop: 8 }}>Nota: {row.notes}</small>}
     </article>)}
@@ -320,11 +321,18 @@ export default function MovementCategoriesExperience() {
 
   useEffect(() => {
     const refresh = () => { if (mount) void load(); };
+    const refreshWhenVisible = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("civ:inventory-changed", refresh);
     window.addEventListener("civ:inventory-updated", refresh);
+    window.addEventListener("civ:field-orders-changed", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.removeEventListener("civ:inventory-changed", refresh);
       window.removeEventListener("civ:inventory-updated", refresh);
+      window.removeEventListener("civ:field-orders-changed", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [load, mount]);
 
@@ -332,6 +340,7 @@ export default function MovementCategoriesExperience() {
   const activeSales = useMemo(() => saleGroups.filter((group) => group.activeRows.length > 0), [saleGroups]);
   const canceledSales = useMemo(() => saleGroups.filter((group) => group.voidedRows.length > 0), [saleGroups]);
   const orders = useMemo(() => data?.orders ?? [], [data]);
+  const activeOrders = useMemo(() => orders.filter((row) => row.status !== "cancelado" && !row.canceledAt), [orders]);
   const canceledOrders = useMemo(() => orders.filter((row) => row.status === "cancelado" || Boolean(row.canceledAt)).slice().sort((left, right) => (right.canceledAt || right.createdAt).localeCompare(left.canceledAt || left.createdAt)), [orders]);
   const purchases = useMemo(() => (data?.rows ?? []).filter((row) => ["inventario_inicial", "entrada_compra"].includes(row.type)), [data]);
   const returns = useMemo(() => (data?.rows ?? []).filter((row) => ["devolucion_cliente", "devolucion_proveedor"].includes(row.type)), [data]);
@@ -373,21 +382,24 @@ export default function MovementCategoriesExperience() {
 
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
       <div><strong style={{ display: "block", fontSize: 20 }}>{title}</strong><small style={{ color: "var(--muted)" }}>{category ? "Consulta únicamente esta clase de movimientos." : "Elige una categoría para evitar mezclar operaciones distintas."}</small></div>
-      {category && <button type="button" className="secondary" onClick={() => setCategory(null)}>← Categorías</button>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button type="button" className="mini" onClick={() => void load()} disabled={loading}>{loading ? "Actualizando…" : "Actualizar"}</button>
+        {category && <button type="button" className="secondary" onClick={() => setCategory(null)}>← Categorías</button>}
+      </div>
     </div>
 
     {loading && !data ? <div className="loading">Clasificando movimientos…</div> : !category ? <div style={{ display: "grid", gap: 10 }}>
       <CategoryButton title="Ventas realizadas" note="Ventas vigentes agrupadas por folio y cliente." count={activeSales.length} onClick={() => setCategory("ventas")} />
       <CategoryButton title="Ventas anuladas" note="Anulaciones completas o parciales, con desglose por producto." count={canceledSales.length} onClick={() => setCategory("ventas-anuladas")} />
-      <CategoryButton title="Pedidos realizados" note="Cada pedido levantado queda registrado aquí desde el momento en que se solicita." count={orders.length} onClick={() => setCategory("pedidos")} />
-      <CategoryButton title="Pedidos anulados" note="Cada cancelación conserva fecha, usuario y motivo; el conteo aumenta por pedido anulado." count={canceledOrders.length} onClick={() => setCategory("pedidos-anulados")} />
+      <CategoryButton title="Pedidos realizados" note="Solo pedidos vigentes o completados. Al anular uno desaparece de aquí." count={data?.orderSummary?.active ?? activeOrders.length} onClick={() => setCategory("pedidos")} />
+      <CategoryButton title="Pedidos anulados" note="Cada cancelación conserva fecha, usuario y motivo; el conteo aumenta por pedido anulado." count={data?.orderSummary?.canceled ?? canceledOrders.length} onClick={() => setCategory("pedidos-anulados")} />
       <CategoryButton title="Compras y entradas" note="Inventario inicial y entradas de mercancía." count={purchases.length} onClick={() => setCategory("compras")} />
       <CategoryButton title="Devoluciones" note="De cliente y a proveedor, separadas de las ventas." count={returns.length} onClick={() => setCategory("devoluciones")} />
       <CategoryButton title="Ajustes e incidencias" note="Ajustes positivos/negativos y producto defectuoso." count={adjustments.length} onClick={() => setCategory("ajustes")} />
     </div> : <div>
       {category === "ventas" && <SaleCards groups={activeSales} canceled={false} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "ventas-anuladas" && <SaleCards groups={canceledSales} canceled canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
-      {category === "pedidos" && <OrderList rows={orders} canceled={false} />}
+      {category === "pedidos" && <OrderList rows={activeOrders} canceled={false} />}
       {category === "pedidos-anulados" && <OrderList rows={canceledOrders} canceled />}
       {category === "compras" && <MovementList rows={purchases} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "devoluciones" && <MovementList rows={returns} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
