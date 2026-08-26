@@ -142,6 +142,12 @@ export default function FieldOrderExperience() {
     };
   }, [load, mount]);
 
+  const activeLastCreatedOrder = useMemo(() => {
+    if (!lastCreatedOrder || !context) return null;
+    const active = context.orders.some((order) => order.id === lastCreatedOrder.id && order.status !== "cancelado");
+    return active ? lastCreatedOrder : null;
+  }, [context, lastCreatedOrder]);
+
   const results = useMemo(() => {
     const query = normalize(search);
     if (!query || !context) return [];
@@ -276,14 +282,14 @@ export default function FieldOrderExperience() {
         <div><strong style={{ display: "block", fontSize: 19 }}>Pedidos de campo</strong><small style={{ color: "var(--muted)" }}>Al enviarlo, CIV aparta la mercancía para que otro vendedor ya no la ofrezca.</small></div>
         {context?.canCreateOrder && <button type="button" className="primary" onClick={startOrder}>＋ Levantar pedido</button>}
       </div>
-      {notice && <div className="alert success" style={{ marginTop: 12 }}>
+      {notice && (!lastCreatedOrder || activeLastCreatedOrder) && <div className="alert success" style={{ marginTop: 12 }}>
         <span>{notice}</span>
-        {lastCreatedOrder && <a href={whatsappUrl(lastCreatedOrder)} target="_blank" rel="noreferrer" className="primary" style={{ display: "inline-flex", marginTop: 10, textDecoration: "none" }}>Enviar por WhatsApp</a>}
+        {activeLastCreatedOrder && <a href={whatsappUrl(activeLastCreatedOrder)} target="_blank" rel="noreferrer" className="primary" style={{ display: "inline-flex", marginTop: 10, textDecoration: "none" }}>Enviar por WhatsApp</a>}
       </div>}
       {context?.orders?.length ? <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
         {context.orders.slice(0, 4).map((order) => <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 12, borderRadius: 12, background: "var(--soft)" }}>
           <span><code style={{ fontWeight: 800 }}>{order.folio}</code><strong style={{ display: "block" }}>{order.clientName}</strong><small style={{ color: "var(--muted)" }}>{order.lineCount} partida{Number(order.lineCount) === 1 ? "" : "s"} · {order.createdBy}</small></span>
-          <span style={{ textAlign: "right", display: "grid", justifyItems: "end", gap: 6 }}><b>{money.format(Number(order.totalAmount || 0))}</b><small style={{ color: "var(--muted)" }}>Pedido levantado · apartado</small><a href={whatsappUrl(order)} target="_blank" rel="noreferrer" className="mini" style={{ textDecoration: "none" }}>Compartir por WhatsApp</a></span>
+          <span style={{ textAlign: "right", display: "grid", justifyItems: "end", gap: 6 }}><b>{money.format(Number(order.totalAmount || 0))}</b><small style={{ color: "var(--muted)" }}>Pedido levantado · apartado</small>{order.status !== "cancelado" && <a href={whatsappUrl(order)} target="_blank" rel="noreferrer" className="mini" style={{ textDecoration: "none" }}>Compartir por WhatsApp</a>}</span>
         </div>)}
       </div> : null}
     </section>
