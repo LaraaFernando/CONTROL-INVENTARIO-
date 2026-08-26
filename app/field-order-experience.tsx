@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { unitLabel } from "./commercial-units";
 
 type Product = {
   id: number;
@@ -41,13 +42,18 @@ type Order = {
   items: OrderItem[];
 };
 type Context = { products: Product[]; clients: Client[]; orders: Order[]; canCreateOrder: boolean; canCreateClient: boolean };
-type Line = { productId: number; quantity: number };
+type Line = { productId: number; quantity: string };
 type CreatedOrder = Omit<Order, "businessDate" | "createdAt">;
 
 const money = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
 
 function normalize(value: string) {
   return value.trim().toLocaleLowerCase("es-MX").replace(/^#/, "");
+}
+
+function numericQuantity(value: string) {
+  const quantity = Number(value);
+  return Number.isInteger(quantity) && quantity > 0 ? quantity : 0;
 }
 
 function buildWhatsAppMessage(order: Pick<Order, "folio" | "clientName" | "totalAmount" | "notes" | "createdBy" | "items">) {
@@ -57,7 +63,7 @@ function buildWhatsAppMessage(order: Pick<Order, "folio" | "clientName" | "total
     `Cliente: ${order.clientName}`,
     "",
     "*Productos:*",
-    ...order.items.map((item) => `• ${item.quantity} ${item.unit || "pieza"} · ${item.sku} · ${item.productName} — ${money.format(Number(item.totalAmount || 0))}`),
+    ...order.items.map((item) => `• ${item.quantity} ${unitLabel(item.unit, item.quantity !== 1)} · ${item.sku} · ${item.productName} — ${money.format(Number(item.totalAmount || 0))}`),
     "",
     `*Total: ${money.format(Number(order.totalAmount || 0))}*`,
   ];
@@ -140,15 +146,19 @@ export default function FieldOrderExperience() {
     if (!context) return 0;
     return lines.reduce((sum, line) => {
       const product = context.products.find((row) => row.id === line.productId);
-      return sum + Number(product?.salePrice || 0) * line.quantity;
+      return sum + Number(product?.salePrice || 0) * numericQuantity(line.quantity);
     }, 0);
   }, [context, lines]);
 
   function add(product: Product) {
     setLines((current) => {
       const existing = current.find((line) => line.productId === product.id);
-      if (existing) return current.map((line) => line.productId === product.id ? { ...line, quantity: Math.min(product.availableStock, line.quantity + 1) } : line);
-      return [...current, { productId: product.id, quantity: 1 }];
+      if (existing) {
+        return current.map((line) => line.productId === product.id
+          ? { ...line, quantity: String(Math.min(product.availableStock, numericQuantity(line.quantity) + 1)) }
+          : line);
+      }
+      return [...current, { productId: product.id, quantity: "1" }];
     });
     setSearch("");
   }
@@ -168,12 +178,23 @@ export default function FieldOrderExperience() {
     event.preventDefault();
     if (!clientId) { setError("Selecciona un cliente antes de enviar el pedido."); return; }
     if (!lines.length) { setError("Agrega al menos un producto al pedido."); return; }
+
+    const items = lines.map((line) => ({ productId: line.productId, quantity: numericQuantity(line.quantity) }));
+    const invalidLine = items.find((item) => {
+      const product = context?.products.find((row) => row.id === item.productId);
+      return !product || item.quantity < 1 || item.quantity > product.availableStock;
+    });
+    if (invalidLine) {
+      setError("Revisa las cantidades. Cada partida debe estar entre 1 y la existencia disponible.");
+      return;
+    }
+
     setBusy(true); setError("");
     try {
       const response = await fetch("/api/field-orders", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "create_order", clientId, notes, items: lines }),
+        body: JSON.stringify({ action: "create_order", clientId, notes, items }),
       });
       const json = await response.json() as {
         orderId?: number;
@@ -260,6 +281,7 @@ export default function FieldOrderExperience() {
         <div className="modal-head"><div><p>PEDIDO DE CAMPO</p><h2>Levantar pedido</h2></div><button type="button" onClick={() => setOpen(false)} disabled={busy}>×</button></div>
         <form onSubmit={submit}>
           {error && <div className="alert error">{error}</div>}
+          <div className="field-note" style={{ marginBottom: 14 }}><b>La cantidad es exacta.</b> Si una caja contiene 6 juegos, puedes pedir 1, 2, 3, 4, 5 o 6 juegos. La caja es solo el empaque y no obliga a venderla completa.</div>
           <div className="form-grid">
             <label className="wide"><span>Cliente *</span><div style={{ display: "flex", gap: 8 }}><select style={{ flex: 1 }} value={clientId || ""} onChange={(event) => setClientId(Number(event.target.value))} required><option value="">Selecciona cliente</option>{context.clients.map((client) => <option key={client.id} value={client.id}>{client.name}{client.businessName ? ` · ${client.businessName}` : ""}</option>)}</select>{context.canCreateClient && <button type="button" className="mini" onClick={() => setClientOpen(true)}>＋ Cliente</button>}</div></label>
             <label className="wide"><span>Notas del pedido</span><input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Indicaciones para almacén o entrega" /></label>
@@ -267,15 +289,25 @@ export default function FieldOrderExperience() {
 
           <div className="card" style={{ padding: 14, marginTop: 16 }}>
             <strong>Agregar productos</strong>
-            <small style={{ display: "block", color: "var(--muted)", marginTop: 3 }}>“Disponible” ya descuenta lo apartado en otros pedidos.</small>
+            <small style={{ display: "block", color: "var(--muted)", marginTop: 3 }}>“Disponible” ya descuenta lo apartado en otros pedidos. Captura únicamente las piezas, unidades o juegos que el cliente necesita.</small>
             <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Código, nombre o categoría" style={{ width: "100%", marginTop: 9 }} />
-            {search.trim() && <div style={{ display: "grid", gap: 7, marginTop: 9 }}>{results.map((product) => <button key={product.id} type="button" disabled={product.availableStock <= 0} onClick={() => add(product)} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 10, textAlign: "left", border: "1px solid var(--line)", borderRadius: 10, background: "var(--card)", color: "var(--text)", opacity: product.availableStock > 0 ? 1 : .55 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{product.availableStock} disponibles{product.reservedStock ? ` · ${product.reservedStock} apartados` : ""}</small></span><b>{money.format(product.salePrice)}</b></button>)}</div>}
+            {search.trim() && <div style={{ display: "grid", gap: 7, marginTop: 9 }}>{results.map((product) => <button key={product.id} type="button" disabled={product.availableStock <= 0} onClick={() => add(product)} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 10, textAlign: "left", border: "1px solid var(--line)", borderRadius: 10, background: "var(--card)", color: "var(--text)", opacity: product.availableStock > 0 ? 1 : .55 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{product.availableStock} {unitLabel(product.unit, product.availableStock !== 1)} disponibles{product.reservedStock ? ` · ${product.reservedStock} apartados` : ""}</small></span><b>{money.format(product.salePrice)}</b></button>)}</div>}
           </div>
 
           <div style={{ display: "grid", gap: 9, marginTop: 16 }}>{lines.map((line) => {
             const product = context.products.find((row) => row.id === line.productId);
             if (!product) return null;
-            return <div key={line.productId} style={{ display: "grid", gridTemplateColumns: "1fr 110px 36px", gap: 8, alignItems: "center", padding: 11, border: "1px solid var(--line)", borderRadius: 12 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{money.format(product.salePrice)} c/u · {product.availableStock} disponibles · {product.reservedStock} apartados</small></span><input type="number" min={1} max={product.availableStock} value={line.quantity} onChange={(event) => setLines((current) => current.map((row) => row.productId === line.productId ? { ...row, quantity: Math.max(1, Math.min(product.availableStock, Number(event.target.value) || 1)) } : row))} /><button type="button" className="mini danger" onClick={() => setLines((current) => current.filter((row) => row.productId !== line.productId))}>×</button></div>;
+            const unit = unitLabel(product.unit);
+            return <div key={line.productId} style={{ display: "grid", gridTemplateColumns: "1fr 110px 36px", gap: 8, alignItems: "center", padding: 11, border: "1px solid var(--line)", borderRadius: 12 }}><span><code>{product.sku}</code><strong style={{ display: "block" }}>{product.name}</strong><small style={{ color: "var(--muted)" }}>{money.format(product.salePrice)} por {unit} · {product.availableStock} {unitLabel(product.unit, product.availableStock !== 1)} disponibles · {product.reservedStock} apartados</small></span><input aria-label={`Cantidad de ${unitLabel(product.unit, true)}`} inputMode="numeric" type="number" min={1} max={product.availableStock} step={1} value={line.quantity} onFocus={(event) => event.currentTarget.select()} onChange={(event) => {
+              const value = event.target.value;
+              if (value === "" || /^\d+$/.test(value)) {
+                setLines((current) => current.map((row) => row.productId === line.productId ? { ...row, quantity: value } : row));
+              }
+            }} onBlur={() => setLines((current) => current.map((row) => {
+              if (row.productId !== line.productId) return row;
+              const quantity = Math.max(1, Math.min(product.availableStock, numericQuantity(row.quantity) || 1));
+              return { ...row, quantity: String(quantity) };
+            }))} /><button type="button" className="mini danger" onClick={() => setLines((current) => current.filter((row) => row.productId !== line.productId))}>×</button></div>;
           })}</div>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, fontSize: 18 }}><strong>Total</strong><strong>{money.format(total)}</strong></div>

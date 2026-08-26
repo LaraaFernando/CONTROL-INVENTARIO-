@@ -130,3 +130,19 @@ test("builds WhatsApp sharing for field orders", async () => {
   assert.match(scripts, /Productos:/);
   assert.match(scripts, /Levantó:/);
 });
+
+test("field orders allow exact unit quantities without forcing the box maximum", async () => {
+  const source = await readFile(
+    new URL("../app/field-order-experience.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /type Line = \{ productId: number; quantity: string \}/);
+  assert.match(source, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
+  assert.match(source, /if \(value === "" \|\| \/\^\\d\+\$\/\.test\(value\)\)/);
+  assert.match(source, /La caja es solo el empaque y no obliga a venderla completa/);
+  assert.doesNotMatch(
+    source,
+    /Math\.max\(1, Math\.min\(product\.availableStock, Number\(event\.target\.value\) \|\| 1\)\)/,
+  );
+});
