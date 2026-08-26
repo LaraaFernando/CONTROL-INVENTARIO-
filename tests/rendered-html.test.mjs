@@ -202,5 +202,6 @@ test("canceled field orders leave active lists and increase the canceled counter
   assert.match(movements, /<OrderList rows=\{activeOrders\} canceled=\{false\} \/>/);
   assert.match(movements, /addEventListener\("focus", refresh\)/);
   assert.match(movements, /visibilitychange/);
-  assert.match(movements, />Actualizar<\/button>/);
+  assert.match(movements, /Actualizando…/);
+  assert.match(movements, /"Actualizar"/);
 });
