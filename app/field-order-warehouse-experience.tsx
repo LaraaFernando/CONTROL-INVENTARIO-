@@ -116,6 +116,8 @@ export default function FieldOrderWarehouseExperience() {
       const json = await response.json() as { error?: string; saleReference?: string };
       if (!response.ok) throw new Error(json.error || "No se pudo actualizar el pedido.");
       await load();
+      window.dispatchEvent(new CustomEvent("civ:inventory-updated"));
+      window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
     } catch (reasonValue) {
       setError(reasonValue instanceof Error ? reasonValue.message : "No se pudo actualizar el pedido.");
     } finally { setBusy(0); }
