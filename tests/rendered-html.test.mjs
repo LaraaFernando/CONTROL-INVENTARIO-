@@ -199,9 +199,46 @@ test("canceled field orders leave active lists and increase the canceled counter
   assert.match(movements, /row\.status !== "cancelado" && !row\.canceledAt/);
   assert.match(movements, /count=\{data\?\.orderSummary\?\.active \?\? activeOrders\.length\}/);
   assert.match(movements, /count=\{data\?\.orderSummary\?\.canceled \?\? canceledOrders\.length\}/);
-  assert.match(movements, /<OrderList rows=\{activeOrders\} canceled=\{false\} \/>/);
+  assert.match(movements, /<OrderList rows=\{activeOrders\} canceled=\{false\}/);
   assert.match(movements, /addEventListener\("focus", refresh\)/);
   assert.match(movements, /visibilitychange/);
   assert.match(movements, /Actualizando…/);
   assert.match(movements, /"Actualizar"/);
+});
+
+test("field orders can be adjusted partially before dispatch", async () => {
+  const adjustApi = await readFile(
+    new URL("../app/api/field-orders/adjust/route.ts", import.meta.url),
+    "utf8",
+  );
+  const historyApi = await readFile(
+    new URL("../app/api/movement-history/route.ts", import.meta.url),
+    "utf8",
+  );
+  const movements = await readFile(
+    new URL("../app/movement-categories-experience.tsx", import.meta.url),
+    "utf8",
+  );
+  const warehouse = await readFile(
+    new URL("../app/field-order-warehouse-experience.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(adjustApi, /requirePermission\(user, "orders\.manage"\)/);
+  assert.match(adjustApi, /\["levantado", "preparando"\]\.includes\(order\.status\)/);
+  assert.match(adjustApi, /action === "cancel_order"/);
+  assert.match(adjustApi, /action !== "cancel_item"/);
+  assert.match(adjustApi, /DELETE FROM field_order_items/);
+  assert.match(adjustApi, /SET quantity=\?, total_amount=\?/);
+  assert.match(adjustApi, /SELECT COALESCE\(SUM\(total_amount\), 0\)/);
+  assert.match(adjustApi, /action: "anular_producto"/);
+  assert.match(historyApi, /items: orderItems\.filter/);
+  assert.match(historyApi, /canManageOrders/);
+  assert.match(movements, /Anular producto/);
+  assert.match(movements, /Cancelar pedido completo/);
+  assert.match(movements, /\/api\/field-orders\/adjust/);
+  assert.match(movements, /Cantidad de .* a anular/);
+  assert.match(warehouse, /Anular producto/);
+  assert.match(warehouse, /\/api\/field-orders\/adjust/);
+  assert.match(warehouse, /Cancelar pedido completo/);
 });
