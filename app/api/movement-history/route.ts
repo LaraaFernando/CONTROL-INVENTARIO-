@@ -40,12 +40,25 @@ type OrderHistoryRow = {
   createdBy: string;
   businessDate: string;
   createdAt: string;
+  updatedAt: string;
   canceledAt: string | null;
   canceledReason: string;
   updatedBy: string;
   clientName: string;
   lineCount: number;
   totalQuantity: number;
+};
+
+type OrderItemHistoryRow = {
+  id: number;
+  orderId: number;
+  productId: number;
+  sku: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitAmount: number;
+  totalAmount: number;
 };
 
 type OrderSummaryRow = {
@@ -69,7 +82,7 @@ export async function GET(request: Request) {
     await ensureOperationalSchema();
     await ensureFieldOrderSchema();
 
-    const [movementResult, orderResult, orderSummary] = await Promise.all([
+    const [movementResult, orderResult, orderItemsResult, orderSummary] = await Promise.all([
       env.DB.prepare(`
         SELECT
           m.id,
@@ -113,6 +126,7 @@ export async function GET(request: Request) {
           o.created_by AS createdBy,
           o.business_date AS businessDate,
           o.created_at AS createdAt,
+          o.updated_at AS updatedAt,
           o.canceled_at AS canceledAt,
           o.canceled_reason AS canceledReason,
           o.updated_by AS updatedBy,
@@ -123,10 +137,26 @@ export async function GET(request: Request) {
         INNER JOIN clients c ON c.id = o.client_id
         LEFT JOIN field_order_items i ON i.order_id = o.id
         GROUP BY o.id, o.folio, o.status, o.total_amount, o.notes, o.created_by,
-          o.business_date, o.created_at, o.canceled_at, o.canceled_reason, o.updated_by, c.name
+          o.business_date, o.created_at, o.updated_at, o.canceled_at, o.canceled_reason, o.updated_by, c.name
         ORDER BY o.id DESC
         LIMIT 500
       `).all<OrderHistoryRow>(),
+      env.DB.prepare(`
+        SELECT
+          i.id,
+          i.order_id AS orderId,
+          i.product_id AS productId,
+          p.sku,
+          p.name AS productName,
+          p.unit,
+          i.quantity,
+          i.unit_amount AS unitAmount,
+          i.total_amount AS totalAmount
+        FROM field_order_items i
+        INNER JOIN products p ON p.id = i.product_id
+        WHERE i.order_id IN (SELECT id FROM field_orders ORDER BY id DESC LIMIT 500)
+        ORDER BY i.order_id DESC, i.id
+      `).all<OrderItemHistoryRow>(),
       env.DB.prepare(`
         SELECT
           SUM(CASE WHEN status <> 'cancelado' THEN 1 ELSE 0 END) AS active,
@@ -134,6 +164,16 @@ export async function GET(request: Request) {
         FROM field_orders
       `).first<OrderSummaryRow>(),
     ]);
+
+    const orderItems = (orderItemsResult.results ?? []).map((row) => ({
+      ...row,
+      id: Number(row.id),
+      orderId: Number(row.orderId),
+      productId: Number(row.productId),
+      quantity: Number(row.quantity || 0),
+      unitAmount: Number(row.unitAmount || 0),
+      totalAmount: Number(row.totalAmount || 0),
+    }));
 
     return Response.json({
       rows: (movementResult.results ?? []).map((row) => ({
@@ -156,6 +196,7 @@ export async function GET(request: Request) {
         totalAmount: Number(row.totalAmount || 0),
         lineCount: Number(row.lineCount || 0),
         totalQuantity: Number(row.totalQuantity || 0),
+        items: orderItems.filter((item) => item.orderId === Number(row.id)),
       })),
       orderSummary: {
         active: Number(orderSummary?.active || 0),
@@ -163,6 +204,7 @@ export async function GET(request: Request) {
       },
       canDelete: Boolean(user.permissions["movements.delete"]),
       canAudit: Boolean(user.permissions["audit.view"]),
+      canManageOrders: Boolean(user.permissions["orders.manage"]),
     }, {
       headers: { "cache-control": "no-store, max-age=0" },
     });

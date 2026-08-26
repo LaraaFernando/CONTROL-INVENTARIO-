@@ -30,6 +30,18 @@ type Movement = {
   businessDate: string;
 };
 
+type OrderItemHistory = {
+  id: number;
+  orderId: number;
+  productId: number;
+  sku: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitAmount: number;
+  totalAmount: number;
+};
+
 type OrderHistory = {
   id: number;
   folio: string;
@@ -39,12 +51,14 @@ type OrderHistory = {
   createdBy: string;
   businessDate: string;
   createdAt: string;
+  updatedAt: string;
   canceledAt: string | null;
   canceledReason: string;
   updatedBy: string;
   clientName: string;
   lineCount: number;
   totalQuantity: number;
+  items: OrderItemHistory[];
 };
 
 type HistoryData = {
@@ -53,6 +67,7 @@ type HistoryData = {
   orderSummary?: { active: number; canceled: number };
   canDelete: boolean;
   canAudit: boolean;
+  canManageOrders: boolean;
   error?: string;
 };
 
@@ -204,23 +219,44 @@ function SaleCards({ groups, canceled, canDelete, canAudit, onVoid, onAudit }: {
   </div>;
 }
 
-function OrderList({ rows, canceled }: { rows: OrderHistory[]; canceled: boolean }) {
+function OrderList({ rows, canceled, canManageOrders, onCancelItem, onCancelOrder }: {
+  rows: OrderHistory[];
+  canceled: boolean;
+  canManageOrders: boolean;
+  onCancelItem: (order: OrderHistory, item: OrderItemHistory) => void;
+  onCancelOrder: (order: OrderHistory) => void;
+}) {
   if (!rows.length) return <div className="field-note">No hay registros en esta categoría.</div>;
   return <div style={{ display: "grid", gap: 10 }}>
-    {rows.map((row) => <article key={`${canceled ? "cancel" : "created"}-${row.id}`} style={{ border: "1px solid var(--line)", borderRadius: 16, background: "var(--card)", padding: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12 }}>
-        <span>
-          <small style={{ color: canceled ? "var(--danger)" : "var(--muted)", fontWeight: 800 }}>{canceled ? "PEDIDO ANULADO" : "PEDIDO REALIZADO"}</small>
-          <code style={{ display: "block", fontWeight: 800, marginTop: 3 }}>{row.folio}</code>
-          <strong style={{ display: "block", marginTop: 3 }}>{row.clientName}</strong>
-          <small style={{ display: "block", color: "var(--muted)", marginTop: 4 }}>{row.lineCount} partida{row.lineCount === 1 ? "" : "s"} · {row.totalQuantity} unidad{row.totalQuantity === 1 ? "" : "es"}</small>
-        </span>
-        <span style={{ textAlign: "right" }}><strong style={{ display: "block", fontSize: 18 }}>{money.format(Number(row.totalAmount || 0))}</strong><small style={{ color: "var(--muted)" }}>{orderStatusLabels[row.status] || row.status}</small></span>
-      </div>
-      {!canceled && <div className="field-note" style={{ marginTop: 10 }}>Realizado {dateTime(row.createdAt)}{row.createdBy ? ` por ${row.createdBy}` : ""}.</div>}
-      {canceled && <div className="field-note" style={{ marginTop: 10 }}><b>Anulado {dateTime(row.canceledAt)}</b>{row.updatedBy ? ` por ${row.updatedBy}` : ""}{row.canceledReason ? ` · Motivo: ${row.canceledReason}` : ""}</div>}
-      {row.notes && <small style={{ display: "block", color: "var(--muted)", marginTop: 8 }}>Nota: {row.notes}</small>}
-    </article>)}
+    {rows.map((row) => {
+      const editable = !canceled && ["levantado", "preparando"].includes(row.status);
+      return <article key={`${canceled ? "cancel" : "created"}-${row.id}`} style={{ border: "1px solid var(--line)", borderRadius: 16, background: "var(--card)", padding: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12 }}>
+          <span>
+            <small style={{ color: canceled ? "var(--danger)" : "var(--muted)", fontWeight: 800 }}>{canceled ? "PEDIDO ANULADO" : "PEDIDO REALIZADO"}</small>
+            <code style={{ display: "block", fontWeight: 800, marginTop: 3 }}>{row.folio}</code>
+            <strong style={{ display: "block", marginTop: 3 }}>{row.clientName}</strong>
+            <small style={{ display: "block", color: "var(--muted)", marginTop: 4 }}>{row.lineCount} partida{row.lineCount === 1 ? "" : "s"} · {row.totalQuantity} unidad{row.totalQuantity === 1 ? "" : "es"}</small>
+          </span>
+          <span style={{ textAlign: "right" }}><strong style={{ display: "block", fontSize: 18 }}>{money.format(Number(row.totalAmount || 0))}</strong><small style={{ color: "var(--muted)" }}>{orderStatusLabels[row.status] || row.status}</small></span>
+        </div>
+        {!canceled && <div className="field-note" style={{ marginTop: 10 }}>Realizado {dateTime(row.createdAt)}{row.createdBy ? ` por ${row.createdBy}` : ""}{row.updatedAt && row.updatedAt !== row.createdAt ? ` · Último ajuste ${dateTime(row.updatedAt)}` : ""}.</div>}
+        {canceled && <div className="field-note" style={{ marginTop: 10 }}><b>Anulado {dateTime(row.canceledAt)}</b>{row.updatedBy ? ` por ${row.updatedBy}` : ""}{row.canceledReason ? ` · Motivo: ${row.canceledReason}` : ""}</div>}
+        {row.notes && <small style={{ display: "block", color: "var(--muted)", marginTop: 8 }}>Nota: {row.notes}</small>}
+
+        {row.items?.length ? <div style={{ display: "grid", gap: 7, marginTop: 12 }}>
+          {row.items.map((item) => <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center", padding: 10, borderRadius: 12, background: "var(--soft)" }}>
+            <span><code>{item.sku}</code><strong style={{ display: "block", marginTop: 2 }}>{item.productName}</strong><small style={{ color: "var(--muted)" }}>{item.quantity} {item.unit || "unidad"}{item.quantity === 1 ? "" : "es"} · {money.format(Number(item.totalAmount || 0))}</small></span>
+            {editable && canManageOrders && <button type="button" className="mini danger" onClick={() => onCancelItem(row, item)}>Anular producto</button>}
+          </div>)}
+        </div> : null}
+
+        {editable && canManageOrders && <div className="row-actions" style={{ marginTop: 12 }}>
+          <button type="button" className="mini danger" onClick={() => onCancelOrder(row)}>Cancelar pedido completo</button>
+        </div>}
+        {!canceled && !editable && ["transito", "entregado"].includes(row.status) && <div className="field-note" style={{ marginTop: 10 }}>Este pedido ya salió del almacén. Para quitar mercancía usa devolución o anulación de venta.</div>}
+      </article>;
+    })}
   </div>;
 }
 
@@ -366,6 +402,48 @@ export default function MovementCategoriesExperience() {
     }
   }
 
+  async function adjustOrder(order: OrderHistory, item?: OrderItemHistory) {
+    if (!data?.canManageOrders || !["levantado", "preparando"].includes(order.status)) return;
+
+    let action: "cancel_item" | "cancel_order" = item ? "cancel_item" : "cancel_order";
+    let quantity = 0;
+    if (item) {
+      const value = window.prompt(`Cantidad de ${item.sku} · ${item.productName} a anular (1 a ${item.quantity})`, String(item.quantity));
+      if (value == null) return;
+      quantity = Number(value);
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > item.quantity) {
+        setError(`La cantidad debe ser un entero entre 1 y ${item.quantity}.`);
+        return;
+      }
+      if (order.items.length === 1 && quantity === item.quantity) {
+        if (!window.confirm("Es el último producto del pedido. ¿Quieres cancelar el pedido completo?")) return;
+        action = "cancel_order";
+      }
+    }
+
+    const reason = window.prompt(action === "cancel_order" ? `Motivo para cancelar completo ${order.folio}` : "Motivo para anular este producto o cantidad");
+    if (!reason?.trim()) return;
+
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/field-orders/adjust", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, orderId: order.id, itemId: item?.id, quantity, reason: reason.trim() }),
+      });
+      const json = await response.json() as { error?: string; message?: string };
+      if (!response.ok) throw new Error(json.error || "No se pudo ajustar el pedido.");
+      setNotice(json.message || "Pedido actualizado correctamente.");
+      window.dispatchEvent(new CustomEvent("civ:field-orders-changed"));
+      window.dispatchEvent(new CustomEvent("civ:inventory-updated"));
+      window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
+      await load();
+    } catch (reasonValue) {
+      setError(reasonValue instanceof Error ? reasonValue.message : "No se pudo ajustar el pedido.");
+    }
+  }
+
   if (!mount) return null;
 
   const title = category === "ventas" ? "Ventas realizadas"
@@ -391,16 +469,16 @@ export default function MovementCategoriesExperience() {
     {loading && !data ? <div className="loading">Clasificando movimientos…</div> : !category ? <div style={{ display: "grid", gap: 10 }}>
       <CategoryButton title="Ventas realizadas" note="Ventas vigentes agrupadas por folio y cliente." count={activeSales.length} onClick={() => setCategory("ventas")} />
       <CategoryButton title="Ventas anuladas" note="Anulaciones completas o parciales, con desglose por producto." count={canceledSales.length} onClick={() => setCategory("ventas-anuladas")} />
-      <CategoryButton title="Pedidos realizados" note="Solo pedidos vigentes o completados. Al anular uno desaparece de aquí." count={data?.orderSummary?.active ?? activeOrders.length} onClick={() => setCategory("pedidos")} />
-      <CategoryButton title="Pedidos anulados" note="Cada cancelación conserva fecha, usuario y motivo; el conteo aumenta por pedido anulado." count={data?.orderSummary?.canceled ?? canceledOrders.length} onClick={() => setCategory("pedidos-anulados")} />
+      <CategoryButton title="Pedidos realizados" note="Pedidos vigentes/completados. Los nuevos o en preparación pueden ajustarse por producto o cancelarse completos." count={data?.orderSummary?.active ?? activeOrders.length} onClick={() => setCategory("pedidos")} />
+      <CategoryButton title="Pedidos anulados" note="Cada cancelación completa conserva fecha, usuario y motivo." count={data?.orderSummary?.canceled ?? canceledOrders.length} onClick={() => setCategory("pedidos-anulados")} />
       <CategoryButton title="Compras y entradas" note="Inventario inicial y entradas de mercancía." count={purchases.length} onClick={() => setCategory("compras")} />
       <CategoryButton title="Devoluciones" note="De cliente y a proveedor, separadas de las ventas." count={returns.length} onClick={() => setCategory("devoluciones")} />
       <CategoryButton title="Ajustes e incidencias" note="Ajustes positivos/negativos y producto defectuoso." count={adjustments.length} onClick={() => setCategory("ajustes")} />
     </div> : <div>
       {category === "ventas" && <SaleCards groups={activeSales} canceled={false} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "ventas-anuladas" && <SaleCards groups={canceledSales} canceled canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
-      {category === "pedidos" && <OrderList rows={activeOrders} canceled={false} />}
-      {category === "pedidos-anulados" && <OrderList rows={canceledOrders} canceled />}
+      {category === "pedidos" && <OrderList rows={activeOrders} canceled={false} canManageOrders={Boolean(data?.canManageOrders)} onCancelItem={(order, item) => void adjustOrder(order, item)} onCancelOrder={(order) => void adjustOrder(order)} />}
+      {category === "pedidos-anulados" && <OrderList rows={canceledOrders} canceled canManageOrders={false} onCancelItem={() => undefined} onCancelOrder={() => undefined} />}
       {category === "compras" && <MovementList rows={purchases} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "devoluciones" && <MovementList rows={returns} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
       {category === "ajustes" && <MovementList rows={adjustments} canDelete={Boolean(data?.canDelete)} canAudit={Boolean(data?.canAudit)} onVoid={(row) => void voidMovement(row)} onAudit={setAuditMovement} />}
