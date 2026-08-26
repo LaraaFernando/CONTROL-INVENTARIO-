@@ -89,6 +89,10 @@ test("builds classified movement navigation and canceled-sale drilldown", async 
   assert.match(scripts, /Ventas anuladas/);
   assert.match(scripts, /Venta completa anulada/);
   assert.match(scripts, /Anulación parcial/);
+  assert.match(scripts, /Pedidos realizados/);
+  assert.match(scripts, /Pedidos anulados/);
+  assert.match(scripts, /PEDIDO REALIZADO/);
+  assert.match(scripts, /PEDIDO ANULADO/);
   assert.match(scripts, /Compras y entradas/);
   assert.match(scripts, /\/api\/movement-history/);
 });
@@ -145,4 +149,29 @@ test("field orders allow exact unit quantities without forcing the box maximum",
     source,
     /Math\.max\(1, Math\.min\(product\.availableStock, Number\(event\.target\.value\) \|\| 1\)\)/,
   );
+});
+
+test("field order creation and cancellation stay visible and refresh availability", async () => {
+  const historyApi = await readFile(
+    new URL("../app/api/movement-history/route.ts", import.meta.url),
+    "utf8",
+  );
+  const fieldOrders = await readFile(
+    new URL("../app/field-order-experience.tsx", import.meta.url),
+    "utf8",
+  );
+  const warehouse = await readFile(
+    new URL("../app/field-order-warehouse-experience.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(historyApi, /ensureFieldOrderSchema/);
+  assert.match(historyApi, /FROM field_orders o/);
+  assert.match(historyApi, /o\.canceled_at AS canceledAt/);
+  assert.match(historyApi, /o\.canceled_reason AS canceledReason/);
+  assert.match(historyApi, /orders:/);
+  assert.match(fieldOrders, /addEventListener\("civ:inventory-updated"/);
+  assert.match(fieldOrders, /dispatchEvent\(new CustomEvent\("civ:inventory-updated"\)\)/);
+  assert.match(warehouse, /dispatchEvent\(new CustomEvent\("civ:inventory-updated"\)\)/);
+  assert.match(warehouse, /dispatchEvent\(new CustomEvent\("civ:inventory-changed"\)\)/);
 });
