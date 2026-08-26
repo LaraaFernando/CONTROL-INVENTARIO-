@@ -142,13 +142,10 @@ export default function FieldOrderExperience() {
     };
   }, [load, mount]);
 
-  useEffect(() => {
-    if (!context || !lastCreatedOrder) return;
-    const activeOrder = context.orders.find((order) => order.id === lastCreatedOrder.id);
-    if (!activeOrder || activeOrder.status === "cancelado") {
-      setLastCreatedOrder(null);
-      setNotice("");
-    }
+  const activeLastCreatedOrder = useMemo(() => {
+    if (!lastCreatedOrder || !context) return null;
+    const active = context.orders.some((order) => order.id === lastCreatedOrder.id && order.status !== "cancelado");
+    return active ? lastCreatedOrder : null;
   }, [context, lastCreatedOrder]);
 
   const results = useMemo(() => {
@@ -285,9 +282,9 @@ export default function FieldOrderExperience() {
         <div><strong style={{ display: "block", fontSize: 19 }}>Pedidos de campo</strong><small style={{ color: "var(--muted)" }}>Al enviarlo, CIV aparta la mercancía para que otro vendedor ya no la ofrezca.</small></div>
         {context?.canCreateOrder && <button type="button" className="primary" onClick={startOrder}>＋ Levantar pedido</button>}
       </div>
-      {notice && <div className="alert success" style={{ marginTop: 12 }}>
+      {notice && (!lastCreatedOrder || activeLastCreatedOrder) && <div className="alert success" style={{ marginTop: 12 }}>
         <span>{notice}</span>
-        {lastCreatedOrder && lastCreatedOrder.status !== "cancelado" && <a href={whatsappUrl(lastCreatedOrder)} target="_blank" rel="noreferrer" className="primary" style={{ display: "inline-flex", marginTop: 10, textDecoration: "none" }}>Enviar por WhatsApp</a>}
+        {activeLastCreatedOrder && <a href={whatsappUrl(activeLastCreatedOrder)} target="_blank" rel="noreferrer" className="primary" style={{ display: "inline-flex", marginTop: 10, textDecoration: "none" }}>Enviar por WhatsApp</a>}
       </div>}
       {context?.orders?.length ? <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
         {context.orders.slice(0, 4).map((order) => <div key={order.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: 12, borderRadius: 12, background: "var(--soft)" }}>
