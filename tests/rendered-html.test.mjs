@@ -151,7 +151,7 @@ test("field orders allow exact unit quantities without forcing the box maximum",
   );
 });
 
-test("field order creation and cancellation stay visible and refresh availability", async () => {
+test("field order creation and cancellation refresh availability", async () => {
   const historyApi = await readFile(
     new URL("../app/api/movement-history/route.ts", import.meta.url),
     "utf8",
@@ -174,4 +174,33 @@ test("field order creation and cancellation stay visible and refresh availabilit
   assert.match(fieldOrders, /dispatchEvent\(new CustomEvent\("civ:inventory-updated"\)\)/);
   assert.match(warehouse, /dispatchEvent\(new CustomEvent\("civ:inventory-updated"\)\)/);
   assert.match(warehouse, /dispatchEvent\(new CustomEvent\("civ:inventory-changed"\)\)/);
+});
+
+test("canceled field orders leave active lists and increase the canceled counter", async () => {
+  const fieldOrderApi = await readFile(
+    new URL("../app/api/field-orders/route.ts", import.meta.url),
+    "utf8",
+  );
+  const historyApi = await readFile(
+    new URL("../app/api/movement-history/route.ts", import.meta.url),
+    "utf8",
+  );
+  const movements = await readFile(
+    new URL("../app/movement-categories-experience.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(fieldOrderApi, /WHERE o\.status <> 'cancelado'/);
+  assert.match(historyApi, /SUM\(CASE WHEN status <> 'cancelado' THEN 1 ELSE 0 END\) AS active/);
+  assert.match(historyApi, /SUM\(CASE WHEN status = 'cancelado' OR canceled_at IS NOT NULL THEN 1 ELSE 0 END\) AS canceled/);
+  assert.match(historyApi, /orderSummary:/);
+  assert.match(historyApi, /cache-control/);
+  assert.match(movements, /const activeOrders = useMemo/);
+  assert.match(movements, /row\.status !== "cancelado" && !row\.canceledAt/);
+  assert.match(movements, /count=\{data\?\.orderSummary\?\.active \?\? activeOrders\.length\}/);
+  assert.match(movements, /count=\{data\?\.orderSummary\?\.canceled \?\? canceledOrders\.length\}/);
+  assert.match(movements, /<OrderList rows=\{activeOrders\} canceled=\{false\} \/>/);
+  assert.match(movements, /addEventListener\("focus", refresh\)/);
+  assert.match(movements, /visibilitychange/);
+  assert.match(movements, />Actualizar<\/button>/);
 });

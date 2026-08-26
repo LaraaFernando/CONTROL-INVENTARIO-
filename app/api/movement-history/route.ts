@@ -48,6 +48,11 @@ type OrderHistoryRow = {
   totalQuantity: number;
 };
 
+type OrderSummaryRow = {
+  active: number;
+  canceled: number;
+};
+
 function errorResponse(error: unknown) {
   if (error instanceof AuthError) {
     return Response.json({ error: error.message }, { status: error.status });
@@ -64,7 +69,7 @@ export async function GET(request: Request) {
     await ensureOperationalSchema();
     await ensureFieldOrderSchema();
 
-    const [movementResult, orderResult] = await Promise.all([
+    const [movementResult, orderResult, orderSummary] = await Promise.all([
       env.DB.prepare(`
         SELECT
           m.id,
@@ -122,6 +127,12 @@ export async function GET(request: Request) {
         ORDER BY o.id DESC
         LIMIT 500
       `).all<OrderHistoryRow>(),
+      env.DB.prepare(`
+        SELECT
+          SUM(CASE WHEN status <> 'cancelado' THEN 1 ELSE 0 END) AS active,
+          SUM(CASE WHEN status = 'cancelado' OR canceled_at IS NOT NULL THEN 1 ELSE 0 END) AS canceled
+        FROM field_orders
+      `).first<OrderSummaryRow>(),
     ]);
 
     return Response.json({
@@ -146,8 +157,14 @@ export async function GET(request: Request) {
         lineCount: Number(row.lineCount || 0),
         totalQuantity: Number(row.totalQuantity || 0),
       })),
+      orderSummary: {
+        active: Number(orderSummary?.active || 0),
+        canceled: Number(orderSummary?.canceled || 0),
+      },
       canDelete: Boolean(user.permissions["movements.delete"]),
       canAudit: Boolean(user.permissions["audit.view"]),
+    }, {
+      headers: { "cache-control": "no-store, max-age=0" },
     });
   } catch (error) {
     return errorResponse(error);
