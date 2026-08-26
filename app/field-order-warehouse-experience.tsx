@@ -95,7 +95,7 @@ export default function FieldOrderWarehouseExperience() {
     let reason = "";
     let completeConfirmed = false;
     if (action === "cancel") {
-      reason = window.prompt(`Motivo para cancelar ${order.folio}`) || "";
+      reason = window.prompt(`Motivo para cancelar completo ${order.folio}`) || "";
       if (!reason.trim()) return;
     }
     if (action === "dispatch") {
@@ -116,6 +116,7 @@ export default function FieldOrderWarehouseExperience() {
       const json = await response.json() as { error?: string; saleReference?: string };
       if (!response.ok) throw new Error(json.error || "No se pudo actualizar el pedido.");
       await load();
+      window.dispatchEvent(new CustomEvent("civ:field-orders-changed"));
       window.dispatchEvent(new CustomEvent("civ:inventory-updated"));
       window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
     } catch (reasonValue) {
@@ -123,12 +124,48 @@ export default function FieldOrderWarehouseExperience() {
     } finally { setBusy(0); }
   }, [load]);
 
+  const adjustItem = useCallback(async (order: Order, item: Item) => {
+    if (!["levantado", "preparando"].includes(order.status)) return;
+    const value = window.prompt(`Cantidad de ${item.sku} · ${item.productName} a anular (1 a ${item.quantity})`, String(item.quantity));
+    if (value == null) return;
+    const quantity = Number(value);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > item.quantity) {
+      setError(`La cantidad debe ser un entero entre 1 y ${item.quantity}.`);
+      return;
+    }
+    if (order.items.length === 1 && quantity === item.quantity) {
+      if (window.confirm("Es el último producto del pedido. Para conservar correctamente el historial se cancelará el pedido completo. ¿Continuar?")) {
+        await act(order, "cancel");
+      }
+      return;
+    }
+    const reason = window.prompt("Motivo para anular este producto o cantidad") || "";
+    if (!reason.trim()) return;
+
+    setBusy(order.id); setError("");
+    try {
+      const response = await fetch("/api/field-orders/adjust", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "cancel_item", orderId: order.id, itemId: item.id, quantity, reason: reason.trim() }),
+      });
+      const json = await response.json() as { error?: string; message?: string };
+      if (!response.ok) throw new Error(json.error || "No se pudo ajustar el pedido.");
+      await load();
+      window.dispatchEvent(new CustomEvent("civ:field-orders-changed"));
+      window.dispatchEvent(new CustomEvent("civ:inventory-updated"));
+      window.dispatchEvent(new CustomEvent("civ:inventory-changed"));
+    } catch (reasonValue) {
+      setError(reasonValue instanceof Error ? reasonValue.message : "No se pudo ajustar el pedido.");
+    } finally { setBusy(0); }
+  }, [act, load]);
+
   if (!mount || !data?.canManageWarehouse) return null;
 
   return createPortal(
     <section style={{ marginBottom: 18, padding: 16, border: "1px solid var(--line)", borderRadius: 18, background: "var(--card)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div><strong style={{ display: "block", fontSize: 19 }}>Almacén · pedidos por atender</strong><small style={{ color: "var(--muted)" }}>Aquí empieza el surtido. El inventario físico sale hasta marcar En tránsito.</small></div>
+        <div><strong style={{ display: "block", fontSize: 19 }}>Almacén · pedidos por atender</strong><small style={{ color: "var(--muted)" }}>Puedes ajustar productos mientras el pedido esté Levantado o Preparando. El inventario físico sale hasta marcar En tránsito.</small></div>
         <button type="button" className="mini" onClick={() => void load()}>Actualizar</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, marginTop: 12 }}>
@@ -143,8 +180,11 @@ export default function FieldOrderWarehouseExperience() {
             <span><code style={{ fontWeight: 800 }}>{order.folio}</code><strong style={{ display: "block", marginTop: 3 }}>{order.clientName}</strong><small style={{ color: "var(--muted)" }}>{order.createdBy} · {money.format(order.totalAmount)}</small></span>
             <span style={{ fontWeight: 800 }}>{statusLabel[order.status]}</span>
           </div>
-          <div style={{ display: "grid", gap: 5, marginTop: 10 }}>
-            {order.items.map((item) => <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}><span><code>{item.sku}</code> · {item.productName}</span><strong>{item.quantity} {item.unit}</strong></div>)}
+          <div style={{ display: "grid", gap: 7, marginTop: 10 }}>
+            {order.items.map((item) => <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+              <span><code>{item.sku}</code> · {item.productName}<strong style={{ display: "block", marginTop: 2 }}>{item.quantity} {item.unit}</strong></span>
+              {["levantado", "preparando"].includes(order.status) && <button type="button" className="mini danger" disabled={busy === order.id} onClick={() => void adjustItem(order, item)}>Anular producto</button>}
+            </div>)}
           </div>
           {order.notes && <small style={{ display: "block", marginTop: 8, color: "var(--muted)" }}>Nota: {order.notes}</small>}
           {order.saleReference && <small style={{ display: "block", marginTop: 5, color: "var(--muted)" }}>Venta: {order.saleReference}</small>}
@@ -152,7 +192,7 @@ export default function FieldOrderWarehouseExperience() {
             {order.status === "levantado" && <button type="button" className="primary" disabled={busy === order.id} onClick={() => void act(order, "start_preparing")}>{busy === order.id ? "Guardando…" : "Empezar a preparar"}</button>}
             {order.status === "preparando" && <button type="button" className="primary" disabled={busy === order.id} onClick={() => void act(order, "dispatch")}>{busy === order.id ? "Despachando…" : "Pedido completo · En tránsito"}</button>}
             {order.status === "transito" && <button type="button" className="primary" disabled={busy === order.id} onClick={() => void act(order, "deliver")}>{busy === order.id ? "Guardando…" : "Confirmar entrega"}</button>}
-            {["levantado", "preparando"].includes(order.status) && <button type="button" className="mini danger" disabled={busy === order.id} onClick={() => void act(order, "cancel")}>Cancelar</button>}
+            {["levantado", "preparando"].includes(order.status) && <button type="button" className="mini danger" disabled={busy === order.id} onClick={() => void act(order, "cancel")}>Cancelar pedido completo</button>}
           </div>}
         </article>)}
         {!visible.length && <div style={{ padding: 14, color: "var(--muted)" }}>No hay pedidos pendientes por atender.</div>}
